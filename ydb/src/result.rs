@@ -48,6 +48,10 @@ impl QueryResult {
         })
     }
 
+    pub fn into_results(self) -> Vec<ResultSet> {
+        self.results
+    }
+
     pub fn into_only_result(self) -> YdbResult<ResultSet> {
         let mut iter = self.results.into_iter();
         match iter.next() {
