@@ -85,9 +85,32 @@ pub struct ResultSet {
     raw_result_set: RawResultSet,
 }
 
+#[derive(Clone, Debug)]
+pub struct Column {
+    pub name: String,
+    pub value_type: Option<Value>,
+    pub ordinal: usize,
+}
+
+fn make_columns(columns: &[crate::types::Column]) -> Vec<Column> {
+    columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| Column {
+            name: column.name.clone(),
+            value_type: column.v_type.clone().into_value_example().ok(),
+            ordinal: index,
+        })
+        .collect()
+}
+
 impl ResultSet {
+    pub fn columns(&self) -> Vec<Column> {
+        make_columns(&self.columns)
+    }
+
     #[allow(dead_code)]
-    pub(crate) fn columns(&self) -> &Vec<crate::types::Column> {
+    pub(crate) fn raw_columns(&self) -> &Vec<crate::types::Column> {
         &self.columns
     }
 
@@ -144,6 +167,25 @@ pub struct Row {
 }
 
 impl Row {
+    pub fn columns(&self) -> Vec<Column> {
+        make_columns(&self.columns)
+    }
+
+    // pub fn copy_value(&self, name: &str) -> Option<Value> {
+    //     let index = self.columns_by_name.get(name)?;
+
+    //     self.raw_values
+    //         .get(index)
+    //         .map(|raw| {
+    //             Value::try_from(RawTypedValue {
+    //                 r#type: self.columns[*index].v_type.clone(),
+    //                 value: raw.clone(),
+    //             })
+    //             .ok()
+    //         })
+    //         .flatten()
+    // }
+
     pub fn remove_field_by_name(&mut self, name: &str) -> errors::YdbResult<Value> {
         if let Some(&index) = self.columns_by_name.get(name) {
             return self.remove_field(index);
