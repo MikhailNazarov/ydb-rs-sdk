@@ -198,6 +198,16 @@ pub struct ValueOptional {
     pub(crate) value: Option<Value>,
 }
 
+impl ValueOptional {
+    pub fn get_inner_type(&self) -> Value {
+        self.t.clone()
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.value.is_none()
+    }
+}
+
 impl Default for Box<ValueOptional> {
     fn default() -> Self {
         Box::new(ValueOptional {
@@ -626,8 +636,7 @@ impl From<String> for Bytes {
 }
 
 impl From<&str> for Bytes {
-    fn from(val: &str)->Self{
-        Self{vec: val.into()}
+    fn from(val: &str) -> Self {
+        Self { vec: val.into() }
     }
 }
-
