@@ -201,8 +201,8 @@ pub struct ValueOptional {
 }
 
 impl ValueOptional {
-    pub fn get_inner_type(&self) -> Value {
-        self.t.clone()
+    pub fn get_inner_type(&self) -> &Value {
+        &self.t
     }
 
     pub fn is_none(&self) -> bool {

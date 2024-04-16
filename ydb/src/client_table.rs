@@ -133,6 +133,12 @@ impl TableClient {
         }
     }
 
+    pub async fn keepalive(&self)->YdbResult<()>{
+        let mut session = self.session_pool.session().await?;
+        
+        session.keepalive().await
+    }
+
     #[allow(dead_code)]
     pub(crate) fn with_max_active_sessions(mut self, size: usize) -> Self {
         self.session_pool = self.session_pool.with_max_active_sessions(size);
