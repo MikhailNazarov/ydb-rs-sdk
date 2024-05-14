@@ -192,7 +192,7 @@ impl TableClient {
             .with_error_on_truncate(self.error_on_truncate)
     }
 
-    pub(crate) fn create_interactive_transaction(&self) -> impl Transaction {
+    pub fn create_interactive_transaction(&self) -> impl Transaction {
         SerializableReadWriteTx::new(self.session_pool.clone(), self.timeouts)
             .with_error_on_truncate(self.error_on_truncate)
     }
