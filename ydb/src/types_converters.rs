@@ -1,10 +1,12 @@
 use crate::errors::YdbError;
 use crate::types::{Bytes, Value, ValueOptional};
 use crate::{ValueList, ValueStruct};
+use chrono::{DateTime, TimeZone, Utc};
 use itertools::Itertools;
 use std::any::type_name;
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::ops::Add;
+use std::time::{Duration, SystemTime};
 
 macro_rules! simple_convert {
     ($native_type:ty, $ydb_value_kind_first:path $(,$ydb_value_kind:path)* $(,)?) => {
@@ -85,12 +87,7 @@ simple_convert!(
     Value::Uint16,
     Value::Uint8,
 );
-simple_convert!(
-    String,
-    Value::Text,
-    Value::Json,
-    Value::JsonDocument,
-);
+simple_convert!(String, Value::Text, Value::Json, Value::JsonDocument,);
 simple_convert!(
     Bytes,
     Value::String,
@@ -161,6 +158,31 @@ where
             .map(|item| item.try_into())
             .try_collect()?;
         Ok(res)
+    }
+}
+
+impl From<DateTime<Utc>> for Value {
+    fn from(value: DateTime<Utc>) -> Self {
+        Value::DateTime(SystemTime::UNIX_EPOCH.add(Duration::from_secs(value.timestamp() as u64)))
+    }
+}
+impl TryFrom<Value> for DateTime<Utc> {
+    type Error = YdbError;
+    fn try_from(from_value: Value) -> Result<Self, Self::Error> {
+        let kind_name = from_value.kind_static();
+        let time = match from_value {
+            Value::DateTime(time) => time,
+            _ => {
+                return Err(YdbError::from_str(format!(
+                    "failed convert {} to DateTime<Utc>",
+                    kind_name
+                )))
+            }
+        };
+        Ok(Utc.timestamp(
+            time.duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as i64,
+            0,
+        ))
     }
 }
 
