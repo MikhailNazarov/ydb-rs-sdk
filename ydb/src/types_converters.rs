@@ -161,6 +161,23 @@ where
     }
 }
 
+impl TryFrom<Value> for Option<chrono::DateTime<Utc>> {
+    type Error = YdbError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Optional(v) => {
+                if v.is_none() {
+                    Ok(None)
+                } else {
+                    DateTime::<Utc>::try_from(v.value.unwrap()).map(|x| Some(x))
+                }
+            }
+            value => Self::try_from(value),
+        }
+    }
+}
+
 impl From<DateTime<Utc>> for Value {
     fn from(value: DateTime<Utc>) -> Self {
         Value::DateTime(SystemTime::UNIX_EPOCH.add(Duration::from_secs(value.timestamp() as u64)))
