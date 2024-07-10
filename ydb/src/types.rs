@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use crate::grpc_wrapper::raw_table_service::value::r#type::RawType;
 use crate::grpc_wrapper::raw_table_service::value::RawColumn;
+use chrono::{Date, DateTime, Utc};
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::num::TryFromIntError;
@@ -74,8 +75,8 @@ pub enum Value {
     Uint64(u64),
     Float(f32),
     Double(f64),
-    Date(std::time::SystemTime),
-    DateTime(std::time::SystemTime),
+    Date(Date<Utc>),
+    DateTime(DateTime<Utc>),
     Timestamp(std::time::SystemTime),
     Interval(SignedInterval),
 
@@ -382,22 +383,12 @@ impl Value {
             Self::Date(val) => proto_typed_value(
                 pt::Date,
                 pv::Uint32Value(
-                    (val.duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        / SECONDS_PER_DAY)
-                        .try_into()?,
+                    (val.and_hms(0, 0, 0).timestamp() / SECONDS_PER_DAY as i64).try_into()?,
                 ),
             ),
-            Self::DateTime(val) => proto_typed_value(
-                pt::Datetime,
-                pv::Uint32Value(
-                    val.duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        .try_into()?,
-                ),
-            ),
+            Self::DateTime(val) => {
+                proto_typed_value(pt::Datetime, pv::Uint32Value(val.timestamp().try_into()?))
+            }
             Self::Timestamp(val) => proto_typed_value(
                 pt::Timestamp,
                 pv::Uint64Value(
@@ -437,7 +428,6 @@ impl Value {
             }),
         })
     }
-
 
     fn to_typed_optional(optional: ValueOptional) -> YdbResult<ydb_proto::TypedValue> {
         if let Value::Optional(_opt) = optional.t {
@@ -544,7 +534,11 @@ impl Value {
             Value::Json("{}".into()),
             Value::JsonDocument("{}".into()),
             Value::Yson("1;2;3;".into()),
-            Value::Decimal("123456789.987654321".parse::<decimal_rs::Decimal>().unwrap()),
+            Value::Decimal(
+                "123456789.987654321"
+                    .parse::<decimal_rs::Decimal>()
+                    .unwrap(),
+            ),
         ];
 
         num_tests!(values, Value::Int8, i8);
@@ -560,12 +554,8 @@ impl Value {
 
         values.push(Value::Void);
 
-        values.push(Value::Date(
-            SystemTime::UNIX_EPOCH.add(std::time::Duration::from_secs(1633996800)),
-        )); //Tue Oct 12 00:00:00 UTC 2021
-        values.push(Value::DateTime(
-            SystemTime::UNIX_EPOCH.add(std::time::Duration::from_secs(1634000523)),
-        )); //Tue Oct 12 01:02:03 UTC 2021
+        values.push(Value::Date(Utc::today()));
+        values.push(Value::DateTime(Utc::now()));
 
         values.push(Value::Timestamp(
             SystemTime::UNIX_EPOCH.add(std::time::Duration::from_micros(16340005230000123)),

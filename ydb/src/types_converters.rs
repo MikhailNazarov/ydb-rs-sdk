@@ -1,12 +1,11 @@
 use crate::errors::YdbError;
 use crate::types::{Bytes, Value, ValueOptional};
 use crate::{ValueList, ValueStruct};
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{Date, DateTime, Utc};
 use itertools::Itertools;
 use std::any::type_name;
 use std::collections::HashMap;
-use std::ops::Add;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 macro_rules! simple_convert {
     ($native_type:ty, $ydb_value_kind_first:path $(,$ydb_value_kind:path)* $(,)?) => {
@@ -98,7 +97,9 @@ simple_convert!(
 );
 simple_convert!(f32, Value::Float);
 simple_convert!(f64, Value::Double, Value::Float);
-simple_convert!(SystemTime, Value::Timestamp, Value::Date, Value::DateTime);
+simple_convert!(SystemTime, Value::Timestamp);
+simple_convert!(DateTime<Utc>, Value::DateTime);
+simple_convert!(Date<Utc>, Value::Date);
 simple_convert!(decimal_rs::Decimal, Value::Decimal);
 
 // Impl additional Value From
@@ -161,47 +162,47 @@ where
     }
 }
 
-impl TryFrom<Value> for Option<chrono::DateTime<Utc>> {
-    type Error = YdbError;
+// impl TryFrom<Value> for Option<chrono::DateTime<Utc>> {
+//     type Error = YdbError;
 
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        match value {
-            Value::Optional(v) => {
-                if v.is_none() {
-                    Ok(None)
-                } else {
-                    DateTime::<Utc>::try_from(v.value.unwrap()).map(|x| Some(x))
-                }
-            }
-            value => Self::try_from(value),
-        }
-    }
-}
+//     fn try_from(value: Value) -> Result<Self, Self::Error> {
+//         match value {
+//             Value::Optional(v) => {
+//                 if v.is_none() {
+//                     Ok(None)
+//                 } else {
+//                     DateTime::<Utc>::try_from(v.value.unwrap()).map(|x| Some(x))
+//                 }
+//             }
+//             value => Self::try_from(value),
+//         }
+//     }
+// }
 
-impl From<DateTime<Utc>> for Value {
-    fn from(value: DateTime<Utc>) -> Self {
-        Value::DateTime(SystemTime::UNIX_EPOCH.add(Duration::from_secs(value.timestamp() as u64)))
-    }
-}
-impl TryFrom<Value> for DateTime<Utc> {
-    type Error = YdbError;
-    fn try_from(from_value: Value) -> Result<Self, Self::Error> {
-        let kind_name = from_value.kind_static();
-        let time = match from_value {
-            Value::DateTime(time) => time,
-            _ => {
-                return Err(YdbError::from_str(format!(
-                    "failed convert {} to DateTime<Utc>",
-                    kind_name
-                )))
-            }
-        };
-        Ok(Utc.timestamp(
-            time.duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as i64,
-            0,
-        ))
-    }
-}
+// impl From<DateTime<Utc>> for Value {
+//     fn from(value: DateTime<Utc>) -> Self {
+//         Value::DateTime(SystemTime::UNIX_EPOCH.add(Duration::from_secs(value.timestamp() as u64)))
+//     }
+// }
+// impl TryFrom<Value> for DateTime<Utc> {
+//     type Error = YdbError;
+//     fn try_from(from_value: Value) -> Result<Self, Self::Error> {
+//         let kind_name = from_value.kind_static();
+//         let time = match from_value {
+//             Value::DateTime(time) => time,
+//             _ => {
+//                 return Err(YdbError::from_str(format!(
+//                     "failed convert {} to DateTime<Utc>",
+//                     kind_name
+//                 )))
+//             }
+//         };
+//         Ok(Utc.timestamp(
+//             time.duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as i64,
+//             0,
+//         ))
+//     }
+// }
 
 // From hashmap to Value::Struct
 impl From<HashMap<String, Value>> for Value {
