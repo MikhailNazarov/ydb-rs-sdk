@@ -2,6 +2,8 @@ use crate::errors;
 use crate::errors::{YdbError, YdbResult, YdbStatusError};
 use crate::grpc::proto_issues_to_ydb_issues;
 use crate::grpc_wrapper::raw_table_service::execute_data_query::RawExecuteDataQueryResult;
+use crate::grpc_wrapper::raw_table_service::explain_data_query::RawExplainDataQueryResult;
+use crate::grpc_wrapper::raw_table_service::prepare_data_query::RawPrepareDataQueryResult;
 use crate::grpc_wrapper::raw_table_service::value::{RawResultSet, RawTypedValue, RawValue};
 use crate::trace_helpers::ensure_len_string;
 use crate::types::Value;
@@ -259,5 +261,54 @@ impl StreamResult {
         let raw_res = RawResultSet::try_from(proto_result_set)?;
         let result_set = ResultSet::try_from(raw_res)?;
         Ok(Some(result_set))
+    }
+}
+
+#[derive(Debug)]
+pub struct PrepareQueryResult{
+    pub query_id: String,
+    pub parameters_types: Vec<PrepareQueryParameter>, 
+}
+
+#[derive(Debug)]
+pub struct PrepareQueryParameter{
+    pub name: String,
+    pub value_type: Option<Value>
+}
+
+impl PrepareQueryResult {
+    pub(crate) fn from_raw_result(
+        raw_res: RawPrepareDataQueryResult,
+    ) -> YdbResult<Self> {
+
+        Ok(
+            Self {
+                 query_id: raw_res.query_id, 
+                 parameters_types: raw_res.parameters_types.into_iter().map(|v| 
+                    PrepareQueryParameter {
+                         name: v.name, 
+                         value_type:v.r#type.clone().into_value_example().ok() 
+                    }).collect()
+                }
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct ExplainQueryResult{
+    pub plan: String,
+    pub ast: String,
+}
+
+impl ExplainQueryResult{
+    pub(crate) fn from_raw_result(
+        raw_res: RawExplainDataQueryResult,
+    ) -> YdbResult<Self> {
+
+        //todo: parse result
+        Ok(Self {
+            plan: raw_res.query_plan,
+            ast: raw_res.query_ast,
+         })
     }
 }
