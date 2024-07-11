@@ -1,6 +1,7 @@
 use crate::client::TimeoutSettings;
 
 use crate::errors::*;
+use crate::result::{ExplainQueryResult, PrepareQueryResult};
 use crate::session::Session;
 use crate::session_pool::SessionPool;
 use crate::transaction::{AutoCommit, Mode, SerializableReadWriteTx, Transaction};
@@ -139,8 +140,14 @@ impl TableClient {
         session.keepalive().await
     }
 
-    pub fn prepare_data_query(&self) -> Query {
-        self.session_pool.prepare_data_query()  
+    pub async fn prepare_data_query(&self, query: String) -> YdbResult<PrepareQueryResult> {
+        let mut session = self.session_pool.session().await?;
+        session.prepare_data_query(query).await
+    }
+
+    pub async fn explain_data_query(&self, query: String) -> YdbResult<ExplainQueryResult> {
+        let mut session = self.session_pool.session().await?;
+        session.explain_data_query(query).await
     }
 
     #[allow(dead_code)]

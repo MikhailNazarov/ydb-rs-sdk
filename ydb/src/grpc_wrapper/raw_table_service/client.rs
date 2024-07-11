@@ -84,7 +84,7 @@ impl RawTableClient {
             request_with_result!(
                 self.service.prepare_data_query,
                 req => ydb_grpc::ydb_proto::table::PrepareDataQueryRequest,
-                ydb_grpc::ydb_proto::table::PrepareQueryResult => RawExplainDataQueryResult
+                ydb_grpc::ydb_proto::table::PrepareQueryResult => RawPrepareDataQueryResult
             );
     }
     pub async fn execute_scheme_query(

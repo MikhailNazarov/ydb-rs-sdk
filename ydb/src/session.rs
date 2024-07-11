@@ -1,8 +1,10 @@
 use crate::client::TimeoutSettings;
 use crate::client_table::TableServiceClientType;
 use crate::errors::{YdbError, YdbResult};
+use crate::grpc_wrapper::raw_table_service::explain_data_query::RawExplainDataQueryRequest;
+use crate::grpc_wrapper::raw_table_service::prepare_data_query::RawPrepareDataQueryRequest;
 use crate::query::Query;
-use crate::result::{QueryResult, StreamResult};
+use crate::result::{ExplainQueryResult, PrepareQueryResult, QueryResult, StreamResult};
 use std::sync::atomic::{AtomicI64, Ordering};
 use derivative::Derivative;
 use itertools::Itertools;
@@ -23,9 +25,9 @@ use tracing::{debug, trace};
 use ydb_grpc::ydb_proto::table::v1::table_service_client::TableServiceClient;
 use ydb_grpc::ydb_proto::table::{
     execute_scan_query_request,
-    ExecuteScanQueryRequest, ExplainDataQueryRequest,
+    ExecuteScanQueryRequest,
 };
-use crate::grpc_wrapper::raw_table_service::execute_data_query::{RawExecuteDataQueryRequest};
+use crate::grpc_wrapper::raw_table_service::execute_data_query::RawExecuteDataQueryRequest;
 use crate::grpc_wrapper::raw_table_service::copy_table::{
     RawCopyTableRequest,
     RawCopyTablesRequest
@@ -207,25 +209,28 @@ impl Session {
         self.handle_raw_result(res)
     }
 
-    pub(crate) async fn prepare_data_query(&mut self, query: String) -> YdbResult<QueryResult> {
+    pub(crate) async fn prepare_data_query(&mut self, query: String) -> YdbResult<PrepareQueryResult> {
         let mut table = self.get_table_client().await?;
         let res = table
             .prepare_data_query(RawPrepareDataQueryRequest {
                 session_id: self.id.clone(),
-                query,
+                yql_text: query,
                 operation_params: self.timeouts.operation_params(),
             })
             .await;
-        self.handle_raw_result(res)?.into()
+        let raw_res = self.handle_raw_result(res)?;
+        PrepareQueryResult::from_raw_result( raw_res)
     }
 
-    pub(crate) async fn explain_data_query(&mut self, query: String) -> YdbResult<QueryResult> {
+    pub(crate) async fn explain_data_query(&mut self, query: String) -> YdbResult<ExplainQueryResult> {
         let mut table = self.get_table_client().await?;
-        table.explain_data_query(ExplainDataQueryRequest {            
+        let res = table.explain_data_query(RawExplainDataQueryRequest {            
             operation_params: self.timeouts.operation_params(),
             yql_text: query,
             session_id: self.id.clone(),
-        })
+        }).await;
+        let raw_res = self.handle_raw_result(res)?;
+        ExplainQueryResult::from_raw_result(raw_res)
     }
 
     pub(crate) async fn keepalive(&mut self) -> YdbResult<()> {
