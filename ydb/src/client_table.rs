@@ -139,6 +139,10 @@ impl TableClient {
         session.keepalive().await
     }
 
+    pub fn prepare_data_query(&self) -> Query {
+        self.session_pool.prepare_data_query()  
+    }
+
     #[allow(dead_code)]
     pub(crate) fn with_max_active_sessions(mut self, size: usize) -> Self {
         self.session_pool = self.session_pool.with_max_active_sessions(size);

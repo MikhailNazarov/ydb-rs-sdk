@@ -23,7 +23,7 @@ use tracing::{debug, trace};
 use ydb_grpc::ydb_proto::table::v1::table_service_client::TableServiceClient;
 use ydb_grpc::ydb_proto::table::{
     execute_scan_query_request,
-    ExecuteScanQueryRequest,
+    ExecuteScanQueryRequest, ExplainDataQueryRequest,
 };
 use crate::grpc_wrapper::raw_table_service::execute_data_query::{RawExecuteDataQueryRequest};
 use crate::grpc_wrapper::raw_table_service::copy_table::{
@@ -205,6 +205,27 @@ impl Session {
             .await;
 
         self.handle_raw_result(res)
+    }
+
+    pub(crate) async fn prepare_data_query(&mut self, query: String) -> YdbResult<QueryResult> {
+        let mut table = self.get_table_client().await?;
+        let res = table
+            .prepare_data_query(RawPrepareDataQueryRequest {
+                session_id: self.id.clone(),
+                query,
+                operation_params: self.timeouts.operation_params(),
+            })
+            .await;
+        self.handle_raw_result(res)?.into()
+    }
+
+    pub(crate) async fn explain_data_query(&mut self, query: String) -> YdbResult<QueryResult> {
+        let mut table = self.get_table_client().await?;
+        table.explain_data_query(ExplainDataQueryRequest {            
+            operation_params: self.timeouts.operation_params(),
+            yql_text: query,
+            session_id: self.id.clone(),
+        })
     }
 
     pub(crate) async fn keepalive(&mut self) -> YdbResult<()> {

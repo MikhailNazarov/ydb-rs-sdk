@@ -16,6 +16,9 @@ use ydb_grpc::ydb_proto::table::v1::table_service_client::TableServiceClient;
 use crate::grpc_wrapper::raw_table_service::copy_table::{RawCopyTableRequest, RawCopyTablesRequest};
 use crate::grpc_wrapper::raw_table_service::execute_data_query::{RawExecuteDataQueryRequest, RawExecuteDataQueryResult};
 
+use super::explain_data_query::{RawExplainDataQueryRequest, RawExplainDataQueryResult};
+use super::prepare_data_query::{RawPrepareDataQueryRequest, RawPrepareDataQueryResult};
+
 pub(crate) struct RawTableClient {
     timeouts: TimeoutSettings,
     service: TableServiceClient<InterceptedChannel>,
@@ -65,6 +68,25 @@ impl RawTableClient {
         );
     }
 
+    pub async fn explain_data_query(
+        &mut self,
+        req: RawExplainDataQueryRequest) -> RawResult<RawExplainDataQueryResult> {
+            request_with_result!(
+                self.service.explain_data_query,
+                req => ydb_grpc::ydb_proto::table::ExplainDataQueryRequest,
+                ydb_grpc::ydb_proto::table::ExplainQueryResult => RawExplainDataQueryResult
+            );
+    }
+
+    pub async fn prepare_data_query(
+        &mut self,
+        req: RawPrepareDataQueryRequest) -> RawResult<RawPrepareDataQueryResult> {
+            request_with_result!(
+                self.service.prepare_data_query,
+                req => ydb_grpc::ydb_proto::table::PrepareDataQueryRequest,
+                ydb_grpc::ydb_proto::table::PrepareQueryResult => RawExplainDataQueryResult
+            );
+    }
     pub async fn execute_scheme_query(
         &mut self,
         req: RawExecuteSchemeQueryRequest,
