@@ -17,8 +17,8 @@ impl From<RawExplainDataQueryRequest> for ydb_grpc::ydb_proto::table::ExplainDat
 }
 
 pub(crate) struct RawExplainDataQueryResult {
-    query_ast: String,
-    query_plan: String,
+    pub query_ast: String,
+    pub query_plan: String,
 }
 
 impl TryFrom<ydb_grpc::ydb_proto::table::ExplainQueryResult> for RawExplainDataQueryResult {

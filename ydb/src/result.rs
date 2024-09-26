@@ -296,7 +296,8 @@ impl PrepareQueryResult {
 
 #[derive(Debug)]
 pub struct ExplainQueryResult{
-
+    pub plan: String,
+    pub ast: String,
 }
 
 impl ExplainQueryResult{
@@ -305,6 +306,9 @@ impl ExplainQueryResult{
     ) -> YdbResult<Self> {
 
         //todo: parse result
-        Ok(Self { })
+        Ok(Self {
+            plan: raw_res.query_plan,
+            ast: raw_res.query_ast,
+         })
     }
 }

@@ -1,6 +1,6 @@
 use crate::grpc_wrapper::raw_errors::{RawError, RawResult};
 use crate::{Bytes, SignedInterval, Value, ValueList, ValueOptional, ValueStruct};
-use chrono::{Date, Utc};
+use chrono::Utc;
 use std::time::SystemTime;
 use ydb_grpc::ydb_proto::r#type::{PrimitiveTypeId, Type as ProtoType};
 
