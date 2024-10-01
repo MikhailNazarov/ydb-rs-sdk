@@ -138,6 +138,8 @@ pub use discovery::{Discovery, DiscoveryState, StaticDiscovery};
 // full enum pub types
 pub use query::Query;
 // full enum pub types
+pub use query::QueryStatsMode;
+// full enum pub types
 pub use result::{Column, QueryResult, ResultSet, ResultSetRowsIter, Row, StreamResult};
 // full enum pub types
 pub use transaction::{Mode, Transaction};
