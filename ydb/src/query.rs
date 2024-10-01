@@ -17,7 +17,7 @@ pub struct Query {
 }
 
 #[derive(Clone)]
-pub(crate) enum QueryStatsMode {
+pub enum QueryStatsMode {
     None,
     Basic,
     Full,
