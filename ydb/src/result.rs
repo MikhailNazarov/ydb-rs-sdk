@@ -1,7 +1,7 @@
 use crate::errors;
 use crate::errors::{YdbError, YdbResult, YdbStatusError};
 use crate::grpc::proto_issues_to_ydb_issues;
-use crate::grpc_wrapper::raw_table_service::client::RawQueryStats;
+use crate::grpc_wrapper::raw_table_service::client::{RawQueryStats, RawTableAccessStats};
 use crate::grpc_wrapper::raw_table_service::execute_data_query::RawExecuteDataQueryResult;
 use crate::grpc_wrapper::raw_table_service::explain_data_query::RawExplainDataQueryResult;
 use crate::grpc_wrapper::raw_table_service::prepare_data_query::RawPrepareDataQueryResult;
@@ -100,6 +100,15 @@ pub struct QueryStats {
     pub process_cpu_time: std::time::Duration,
     pub total_duration: std::time::Duration,
     pub total_cpu_time: std::time::Duration,
+    pub affected_rows: u64,
+}
+
+impl RawTableAccessStats{
+    fn affected_rows(&self) -> u64 {
+        self.reads.as_ref().map(|x|x.rows).unwrap_or(0) 
+        + self.updates.as_ref().map(|x|x.rows).unwrap_or(0) 
+        + self.deletes.as_ref().map(|x|x.rows).unwrap_or(0)
+    }
 }
 
 impl From<RawQueryStats> for QueryStats{
@@ -108,6 +117,10 @@ impl From<RawQueryStats> for QueryStats{
             process_cpu_time: value.process_cpu_time,
             total_duration: value.total_duration,
             total_cpu_time: value.total_cpu_time,
+            affected_rows: value.query_phases.iter()
+                .map(|x| 
+                    x.table_access.iter().map(|x| x.affected_rows()).sum::<u64>()
+                ).sum(),
         }
     }
 }

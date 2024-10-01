@@ -12,7 +12,16 @@ pub struct Query {
     pub(crate) text: String,
     pub(crate) parameters: HashMap<String, Value>,
     pub(crate) keep_in_cache: bool,
+    pub(crate) collect_stats: QueryStatsMode,
     force_keep_in_cache: bool,
+}
+
+#[derive(Clone)]
+pub(crate) enum QueryStatsMode {
+    None,
+    Basic,
+    Full,
+    Profile,
 }
 
 impl Query {
@@ -23,6 +32,7 @@ impl Query {
             parameters: HashMap::new(),
             keep_in_cache: false,
             force_keep_in_cache: false,
+            collect_stats: QueryStatsMode::None,
         }
     }
 
@@ -77,9 +87,14 @@ impl Query {
     /// .with_params(ydb_params!("$val" => 123 as i64))
     /// .with_keep_in_cache(false);
     /// ```
-    pub fn with_keep_in_cache(mut self, val: bool)->Self {
+    pub fn with_keep_in_cache(mut self, val: bool) -> Self {
         self.force_keep_in_cache = true;
         self.keep_in_cache = val;
+        self
+    }
+
+    pub fn with_stats(mut self, mode: QueryStatsMode) -> Self {
+        self.collect_stats = mode;
         self
     }
 
