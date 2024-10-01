@@ -1,10 +1,12 @@
-use std::collections::HashMap;
 use crate::grpc_wrapper::raw_errors::RawError;
 use crate::grpc_wrapper::raw_table_service::query_stats::RawQueryStatMode;
 use crate::grpc_wrapper::raw_table_service::transaction_control::RawTransactionControl;
-use crate::grpc_wrapper::raw_table_service::value::{RawResultSet, RawTypedValue};
 use crate::grpc_wrapper::raw_table_service::value::r#type::RawType;
+use crate::grpc_wrapper::raw_table_service::value::{RawResultSet, RawTypedValue};
 use crate::grpc_wrapper::raw_ydb_operation::RawOperationParams;
+use std::collections::HashMap;
+
+use super::client::RawQueryStats;
 
 #[derive(serde::Serialize)]
 pub(crate) struct RawExecuteDataQueryRequest {
@@ -44,7 +46,7 @@ pub(crate) struct RawExecuteDataQueryResult {
     pub result_sets: Vec<RawResultSet>,
     pub tx_meta: RawTransactionMeta,
     pub query_meta: Option<RawQueryMeta>,
-    // query_stats: Option<RawQueryStats>, // todo
+    pub query_stats: Option<RawQueryStats>, // todo
 }
 
 impl TryFrom<ydb_grpc::ydb_proto::table::ExecuteQueryResult> for RawExecuteDataQueryResult {
@@ -59,11 +61,18 @@ impl TryFrom<ydb_grpc::ydb_proto::table::ExecuteQueryResult> for RawExecuteDataQ
             .map(|item| item.try_into())
             .collect();
 
-        let query_meta = if let Some(proto_meta) = value.query_meta{
+        let query_meta = if let Some(proto_meta) = value.query_meta {
             Some(RawQueryMeta::try_from(proto_meta)?)
         } else {
             None
         };
+
+        let query_stats = if let Some(query_stats) = value.query_stats {
+            Some(RawQueryStats::from(query_stats))
+        } else {
+            None
+        };
+
         Ok(Self {
             result_sets: result_sets_res?,
             tx_meta: value
@@ -71,6 +80,7 @@ impl TryFrom<ydb_grpc::ydb_proto::table::ExecuteQueryResult> for RawExecuteDataQ
                 .ok_or_else(|| RawError::custom("no tx_meta at ExecuteQueryResult"))?
                 .into(),
             query_meta,
+            query_stats,
         })
     }
 }

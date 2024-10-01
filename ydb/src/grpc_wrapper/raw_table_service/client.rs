@@ -11,6 +11,7 @@ use crate::grpc_wrapper::raw_table_service::execute_scheme_query::RawExecuteSche
 use crate::grpc_wrapper::raw_table_service::keepalive::{RawKeepAliveRequest, RawKeepAliveResult};
 use crate::grpc_wrapper::raw_table_service::rollback_transaction::RawRollbackTransactionRequest;
 use crate::grpc_wrapper::runtime_interceptors::InterceptedChannel;
+use serde::Serialize;
 use tracing::trace;
 use ydb_grpc::ydb_proto::table::v1::table_service_client::TableServiceClient;
 use crate::grpc_wrapper::raw_table_service::copy_table::{RawCopyTableRequest, RawCopyTablesRequest};
@@ -190,13 +191,13 @@ impl From<CollectStatsMode> for i32 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) struct RawQueryStats {
-    process_cpu_time: std::time::Duration,
+    pub(crate) process_cpu_time: std::time::Duration,
     query_plan: String,
     query_ast: String,
-    total_duration: std::time::Duration,
-    total_cpu_time: std::time::Duration,
+    pub(crate) total_duration: std::time::Duration,
+    pub(crate) total_cpu_time: std::time::Duration,
 }
 
 impl From<ydb_grpc::ydb_proto::table_stats::QueryStats> for RawQueryStats {

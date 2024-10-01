@@ -1,6 +1,7 @@
 use crate::errors;
 use crate::errors::{YdbError, YdbResult, YdbStatusError};
 use crate::grpc::proto_issues_to_ydb_issues;
+use crate::grpc_wrapper::raw_table_service::client::RawQueryStats;
 use crate::grpc_wrapper::raw_table_service::execute_data_query::RawExecuteDataQueryResult;
 use crate::grpc_wrapper::raw_table_service::explain_data_query::RawExplainDataQueryResult;
 use crate::grpc_wrapper::raw_table_service::prepare_data_query::RawPrepareDataQueryResult;
@@ -19,9 +20,13 @@ use ydb_grpc::ydb_proto::table::ExecuteScanQueryPartialResponse;
 pub struct QueryResult {
     pub(crate) results: Vec<ResultSet>,
     pub(crate) tx_id: String,
+    pub(crate) stats: Option<QueryStats>,
 }
 
+
+
 impl QueryResult {
+
     pub(crate) fn from_raw_result(
         error_on_truncate: bool,
         raw_res: RawExecuteDataQueryResult,
@@ -47,11 +52,16 @@ impl QueryResult {
         Ok(QueryResult {
             results,
             tx_id: raw_res.tx_meta.id,
+            stats: raw_res.query_stats.map(|x|x.into()),
         })
     }
 
     pub fn into_results(self) -> Vec<ResultSet> {
         self.results
+    }
+
+    pub fn stats(&self)-> Option<&QueryStats> {
+        self.stats.as_ref()
     }
 
     pub fn into_only_result(self) -> YdbResult<ResultSet> {
@@ -80,6 +90,24 @@ impl QueryResult {
                 }
             }
             None => Err(YdbError::NoRows),
+        }
+    }
+}
+
+
+#[derive(Debug)]
+pub struct QueryStats {
+    pub process_cpu_time: std::time::Duration,
+    pub total_duration: std::time::Duration,
+    pub total_cpu_time: std::time::Duration,
+}
+
+impl From<RawQueryStats> for QueryStats{
+    fn from(value: RawQueryStats) -> Self {
+        Self {
+            process_cpu_time: value.process_cpu_time,
+            total_duration: value.total_duration,
+            total_cpu_time: value.total_cpu_time,
         }
     }
 }
