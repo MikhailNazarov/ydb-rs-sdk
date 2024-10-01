@@ -27,6 +27,13 @@ pub struct QueryResult {
 
 impl QueryResult {
 
+    pub fn rows_len(&self) -> usize {
+        self.results
+            .iter()
+            .map(|x| x.raw_result_set.rows.len())
+            .sum::<usize>()
+    }
+    
     pub(crate) fn from_raw_result(
         error_on_truncate: bool,
         raw_res: RawExecuteDataQueryResult,
