@@ -95,6 +95,12 @@ impl Query {
         self
     }
 
+    pub fn with_stats(mut self, mode: QueryStatsMode) -> Self {
+        self.collect_stats = mode;
+        self
+    }
+
+
     pub(crate) fn query_to_proto(&self) -> ydb_grpc::ydb_proto::table::Query {
         ydb_grpc::ydb_proto::table::Query {
             query: Some(ydb_grpc::ydb_proto::table::query::Query::YqlText(
