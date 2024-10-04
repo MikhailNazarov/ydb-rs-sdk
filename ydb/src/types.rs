@@ -7,6 +7,7 @@ use std::convert::TryInto;
 use std::fmt::Debug;
 use std::num::TryFromIntError;
 use std::time::{Duration, SystemTime};
+use chrono::{Date, DateTime, Utc};
 use strum::{EnumCount, EnumDiscriminants, EnumIter, IntoStaticStr};
 use ydb_grpc::ydb_proto;
 
@@ -74,8 +75,8 @@ pub enum Value {
     Uint64(u64),
     Float(f32),
     Double(f64),
-    Date(std::time::SystemTime),
-    DateTime(std::time::SystemTime),
+    Date(Date<Utc>),
+    DateTime(DateTime<Utc>),
     Timestamp(std::time::SystemTime),
     Interval(SignedInterval),
 
@@ -277,7 +278,7 @@ impl Value {
         })))
     }
 
-    pub(crate) fn optional_from(t: Value, value: Option<Value>) -> YdbResult<Self> {
+    pub fn optional_from(t: Value, value: Option<Value>) -> YdbResult<Self> {
         if let Some(value) = &value {
             if std::mem::discriminant(&t) != std::mem::discriminant(value) {
                 return Err(YdbError::Custom(format!("failed optional_from: type and value has different enum-types. type: '{:?}', value: '{:?}'", t, value)));
@@ -372,22 +373,12 @@ impl Value {
             Self::Date(val) => proto_typed_value(
                 pt::Date,
                 pv::Uint32Value(
-                    (val.duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        / SECONDS_PER_DAY)
-                        .try_into()?,
+                    (val.and_hms(0, 0, 0).timestamp() / SECONDS_PER_DAY as i64).try_into()?,
                 ),
             ),
-            Self::DateTime(val) => proto_typed_value(
-                pt::Datetime,
-                pv::Uint32Value(
-                    val.duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        .try_into()?,
-                ),
-            ),
+            Self::DateTime(val) => {
+                proto_typed_value(pt::Datetime, pv::Uint32Value(val.timestamp().try_into()?))
+            },
             Self::Timestamp(val) => proto_typed_value(
                 pt::Timestamp,
                 pv::Uint64Value(
@@ -550,12 +541,9 @@ impl Value {
 
         values.push(Value::Void);
 
-        values.push(Value::Date(
-            SystemTime::UNIX_EPOCH.add(std::time::Duration::from_secs(1633996800)),
-        )); //Tue Oct 12 00:00:00 UTC 2021
-        values.push(Value::DateTime(
-            SystemTime::UNIX_EPOCH.add(std::time::Duration::from_secs(1634000523)),
-        )); //Tue Oct 12 01:02:03 UTC 2021
+        values.push(Value::Date(Utc::today()));
+        values.push(Value::DateTime(Utc::now()));
+        
 
         values.push(Value::Timestamp(
             SystemTime::UNIX_EPOCH.add(std::time::Duration::from_micros(16340005230000123)),

@@ -4,6 +4,7 @@ mod value_ydb_test;
 
 use std::time::{Duration, SystemTime};
 
+use chrono::{TimeZone, Utc};
 use itertools::Itertools;
 
 use crate::{Bytes, SignedInterval, Value};
@@ -71,11 +72,13 @@ impl TryFrom<crate::Value> for RawTypedValue {
             },
             Value::Date(v) => RawTypedValue {
                 r#type: RawType::Date,
-                value: RawValue::UInt32((v.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / SECONDS_PER_DAY).try_into()?),
+                value: RawValue::UInt32(
+                    (v.and_hms(0, 0, 0).timestamp() / SECONDS_PER_DAY as i64).try_into()?,
+                ),
             },
             Value::DateTime(v) => RawTypedValue {
                 r#type: RawType::DateTime,
-                value: RawValue::UInt32(v.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs().try_into()?),
+                value: RawValue::UInt32(v.timestamp().try_into()?),
             },
             Value::Timestamp(v) => RawTypedValue {
                 r#type: RawType::Timestamp,
@@ -219,9 +222,9 @@ impl TryFrom<RawTypedValue> for Value {
             (t @ RawType::Float, v) => return types_mismatch(t, v),
             (RawType::Double, RawValue::Double(v)) => Value::Double(v),
             (t @ RawType::Double, v) => return types_mismatch(t, v),
-            (RawType::Date, RawValue::UInt32(v)) => Value::Date(SystemTime::UNIX_EPOCH + Duration::from_secs((v as u64) * SECONDS_PER_DAY)),
+            (RawType::Date, RawValue::UInt32(v)) => Value::Date(Utc.timestamp((v as i64) * SECONDS_PER_DAY as i64, 0).date()),
             (t @ RawType::Date, v) => return types_mismatch(t, v),
-            (RawType::DateTime, RawValue::UInt32(v)) => Value::DateTime(SystemTime::UNIX_EPOCH + Duration::from_secs(v.into())),
+            (RawType::DateTime, RawValue::UInt32(v)) => Value::DateTime(Utc.timestamp(v as i64, 0)),
             (t @ RawType::DateTime, v) => return types_mismatch(t, v),
             (RawType::Timestamp, RawValue::UInt64(v)) => Value::Timestamp(SystemTime::UNIX_EPOCH + Duration::from_micros(v)),
             (t @ RawType::Timestamp, v) => return types_mismatch(t, v),

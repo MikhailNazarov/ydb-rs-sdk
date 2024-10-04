@@ -1,5 +1,6 @@
 use std::time::SystemTime;
 use crate::grpc_wrapper::raw_errors::{RawError, RawResult};
+use chrono::Utc;
 use ydb_grpc::ydb_proto::r#type::{PrimitiveTypeId, Type as ProtoType};
 use crate::{Bytes, SignedInterval, Value, ValueList, ValueOptional, ValueStruct};
 
@@ -152,8 +153,8 @@ impl RawType {
             RawType::Uint64 => Value::Uint64(0),
             RawType::Float => Value::Float(0.0),
             RawType::Double => Value::Double(0.0),
-            RawType::Date => Value::Date(SystemTime::UNIX_EPOCH),
-            RawType::DateTime => Value::DateTime(SystemTime::UNIX_EPOCH),
+            RawType::Date => Value::Date(Utc::today()),
+            RawType::DateTime => Value::DateTime(Utc::now()),
             RawType::Timestamp => Value::Timestamp(SystemTime::UNIX_EPOCH),
             RawType::Interval => Value::Interval(SignedInterval::default()),
             t @ RawType::TzDate => return unimplemented_type(t),

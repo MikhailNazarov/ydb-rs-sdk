@@ -1,6 +1,7 @@
 use crate::errors::YdbError;
 use crate::types::{Bytes, Value, ValueOptional};
 use crate::{ValueList, ValueStruct};
+use chrono::{Date, DateTime, Utc};
 use itertools::Itertools;
 use std::any::type_name;
 use std::collections::HashMap;
@@ -101,7 +102,9 @@ simple_convert!(
 );
 simple_convert!(f32, Value::Float);
 simple_convert!(f64, Value::Double, Value::Float);
-simple_convert!(SystemTime, Value::Timestamp, Value::Date, Value::DateTime);
+simple_convert!(SystemTime, Value::Timestamp);
+simple_convert!(DateTime<Utc>, Value::DateTime);
+simple_convert!(Date<Utc>, Value::Date);
 simple_convert!(decimal_rs::Decimal, Value::Decimal);
 
 // Impl additional Value From
