@@ -132,13 +132,13 @@ pub use client_table::{RetryOptions, TableClient, TransactionOptions};
 // full enum pub types
 pub use client_scheme::client::SchemeClient;
 pub use client_scheme::list_types::{SchemeEntry, SchemeEntryType, SchemePermissions};
-
+pub use query::QueryStatsMode;
+// full enum pub types
+pub use result::{Column, QueryResult, ResultSet, ResultSetRowsIter, Row, StreamResult};
 // full enum pub types
 pub use discovery::{Discovery, DiscoveryState, StaticDiscovery};
 // full enum pub types
 pub use query::Query;
-// full enum pub types
-pub use result::{QueryResult, ResultSet, ResultSetRowsIter, Row, StreamResult};
 // full enum pub types
 pub use transaction::{Mode, Transaction};
 // full enum pub types
