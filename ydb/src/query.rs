@@ -13,7 +13,18 @@ pub struct Query {
     pub(crate) parameters: HashMap<String, Value>,
     pub(crate) keep_in_cache: bool,
     force_keep_in_cache: bool,
+    pub(crate) collect_stats: QueryStatsMode,
 }
+
+#[derive(Clone)]
+pub enum QueryStatsMode {
+    None,
+    Basic,
+    Full,
+    Profile,
+}
+
+
 
 impl Query {
     /// Create query with query text
@@ -23,6 +34,7 @@ impl Query {
             parameters: HashMap::new(),
             keep_in_cache: false,
             force_keep_in_cache: false,
+            collect_stats: QueryStatsMode::None,
         }
     }
 

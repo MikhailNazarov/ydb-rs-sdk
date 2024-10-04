@@ -14,7 +14,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt::Debug;
-use std::ops::Add;
+use std::ops::{Add, Deref};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -41,7 +41,18 @@ pub type StaticCredentialsAuth = StaticCredentials;
 #[deprecated(note = "use MetadataUrlCredentials instead")]
 pub type YandexMetadata = MetadataUrlCredentials;
 
-pub(crate) type CredentialsRef = Arc<Box<dyn Credentials>>;
+pub type CredentialsRef = Arc<Box<dyn Credentials>>;
+
+impl Credentials for CredentialsRef{
+
+    fn create_token(&self) -> YdbResult<TokenInfo> {
+        self.deref().create_token()
+    }
+
+    fn debug_string(&self) -> String {
+        self.deref().debug_string()
+    }
+}
 
 pub(crate) fn credencials_ref<T: 'static + Credentials>(cred: T) -> CredentialsRef {
     Arc::new(Box::new(cred))

@@ -5,7 +5,7 @@ use crate::grpc_wrapper::raw_table_service::query_stats::RawQueryStatMode;
 use crate::grpc_wrapper::raw_table_service::transaction_control::{
     RawOnlineReadonlySettings, RawTransactionControl, RawTxMode, RawTxSelector, RawTxSettings,
 };
-use crate::query::Query;
+use crate::query::{Query,QueryStatsMode};
 use crate::result::QueryResult;
 use crate::session::Session;
 use crate::session_pool::SessionPool;
@@ -79,6 +79,17 @@ impl Drop for AutoCommit {
     fn drop(&mut self) {}
 }
 
+impl From<QueryStatsMode> for RawQueryStatMode {
+    fn from(value: QueryStatsMode) -> Self {
+        match value {
+            QueryStatsMode::Basic => RawQueryStatMode::Basic,
+            QueryStatsMode::None => RawQueryStatMode::None,
+            QueryStatsMode::Full => RawQueryStatMode::Full,
+            QueryStatsMode::Profile => RawQueryStatMode::Profile,
+        }
+    }
+}
+
 #[async_trait]
 impl Transaction for AutoCommit {
     async fn query(&mut self, query: Query) -> YdbResult<QueryResult> {
@@ -101,7 +112,7 @@ impl Transaction for AutoCommit {
                 })
                 .try_collect()?,
             keep_in_cache: query.keep_in_cache,
-            collect_stats: RawQueryStatMode::None,
+            collect_stats: query.collect_stats.into(),
         };
 
         let mut session = self.session_pool.session().await?;
@@ -207,7 +218,7 @@ impl Transaction for SerializableReadWriteTx {
                 })
                 .try_collect()?,
             keep_in_cache: false,
-            collect_stats: RawQueryStatMode::None,
+            collect_stats: query.collect_stats.into(),
         };
         let query_result = session
             .execute_data_query(req, self.error_on_truncate_response)

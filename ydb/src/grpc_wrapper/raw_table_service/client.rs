@@ -11,10 +11,14 @@ use crate::grpc_wrapper::raw_table_service::execute_scheme_query::RawExecuteSche
 use crate::grpc_wrapper::raw_table_service::keepalive::{RawKeepAliveRequest, RawKeepAliveResult};
 use crate::grpc_wrapper::raw_table_service::rollback_transaction::RawRollbackTransactionRequest;
 use crate::grpc_wrapper::runtime_interceptors::InterceptedChannel;
+use serde::Serialize;
 use tracing::trace;
 use ydb_grpc::ydb_proto::table::v1::table_service_client::TableServiceClient;
 use crate::grpc_wrapper::raw_table_service::copy_table::{RawCopyTableRequest, RawCopyTablesRequest};
 use crate::grpc_wrapper::raw_table_service::execute_data_query::{RawExecuteDataQueryRequest, RawExecuteDataQueryResult};
+
+use super::explain_data_query::{RawExplainDataQueryRequest, RawExplainDataQueryResult};
+use super::prepare_data_query::{RawPrepareDataQueryRequest, RawPrepareDataQueryResult};
 
 pub(crate) struct RawTableClient {
     timeouts: TimeoutSettings,
@@ -73,6 +77,26 @@ impl RawTableClient {
             self.service.execute_scheme_query,
             req => ydb_grpc::ydb_proto::table::ExecuteSchemeQueryRequest
         );
+    }
+
+    pub async fn explain_data_query(
+        &mut self,
+        req: RawExplainDataQueryRequest) -> RawResult<RawExplainDataQueryResult> {
+            request_with_result!(
+                self.service.explain_data_query,
+                req => ydb_grpc::ydb_proto::table::ExplainDataQueryRequest,
+                ydb_grpc::ydb_proto::table::ExplainQueryResult => RawExplainDataQueryResult
+            );
+    }
+
+    pub async fn prepare_data_query(
+        &mut self,
+        req: RawPrepareDataQueryRequest) -> RawResult<RawPrepareDataQueryResult> {
+            request_with_result!(
+                self.service.prepare_data_query,
+                req => ydb_grpc::ydb_proto::table::PrepareDataQueryRequest,
+                ydb_grpc::ydb_proto::table::PrepareQueryResult => RawPrepareDataQueryResult
+            );
     }
 
     pub async fn keep_alive(&mut self, req: RawKeepAliveRequest) -> RawResult<RawKeepAliveResult> {
@@ -147,6 +171,7 @@ pub(crate) enum CollectStatsMode {
     None,
     Basic,
     Full,
+    Profile
 }
 
 impl From<CollectStatsMode> for ydb_grpc::ydb_proto::table::query_stats_collection::Mode {
@@ -157,6 +182,7 @@ impl From<CollectStatsMode> for ydb_grpc::ydb_proto::table::query_stats_collecti
             CollectStatsMode::None => Mode::StatsCollectionNone,
             CollectStatsMode::Basic => Mode::StatsCollectionBasic,
             CollectStatsMode::Full => Mode::StatsCollectionFull,
+            CollectStatsMode::Profile => Mode::StatsCollectionProfile,
         }
     }
 }
@@ -168,18 +194,83 @@ impl From<CollectStatsMode> for i32 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+pub(crate) struct RawQueryPhaseStats{
+
+    pub duration: std::time::Duration,
+
+    pub table_access: Vec<RawTableAccessStats>,
+
+    pub cpu_time: std::time::Duration,
+
+    pub affected_shards: u64,
+
+    pub literal_phase: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RawTableAccessStats{
+
+    pub name: String,
+    pub reads: Option<RawOperationStats>,
+    pub updates: Option<RawOperationStats>,
+    pub deletes: Option<RawOperationStats>,
+    pub partitions_count: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RawOperationStats {
+    pub rows: u64,
+    pub bytes: u64,
+}
+
+impl From<ydb_grpc::ydb_proto::table_stats::OperationStats> for RawOperationStats {
+    fn from(value: ydb_grpc::ydb_proto::table_stats::OperationStats) -> Self {
+        Self {
+            rows: value.rows,
+            bytes: value.bytes,
+        }
+    }
+}
+
+impl From<ydb_grpc::ydb_proto::table_stats::TableAccessStats> for RawTableAccessStats {
+    fn from(value: ydb_grpc::ydb_proto::table_stats::TableAccessStats) -> Self {
+        Self {
+            name: value.name,
+            reads: value.reads.map(Into::into),
+            updates: value.updates.map(Into::into),
+            deletes: value.deletes.map(Into::into),
+            partitions_count: value.partitions_count,
+        }
+    }
+}
+
+impl From<ydb_grpc::ydb_proto::table_stats::QueryPhaseStats> for RawQueryPhaseStats {
+    fn from(value: ydb_grpc::ydb_proto::table_stats::QueryPhaseStats) -> Self {
+        Self {
+            duration: std::time::Duration::from_micros(value.duration_us),
+            table_access: value.table_access.into_iter().map(Into::into).collect(),
+            cpu_time: std::time::Duration::from_micros(value.cpu_time_us),
+            affected_shards: value.affected_shards,
+            literal_phase: value.literal_phase,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct RawQueryStats {
-    process_cpu_time: std::time::Duration,
+    pub(crate) query_phases: Vec<RawQueryPhaseStats>,
+    pub(crate) process_cpu_time: std::time::Duration,
     query_plan: String,
     query_ast: String,
-    total_duration: std::time::Duration,
-    total_cpu_time: std::time::Duration,
+    pub(crate) total_duration: std::time::Duration,
+    pub(crate) total_cpu_time: std::time::Duration,
 }
 
 impl From<ydb_grpc::ydb_proto::table_stats::QueryStats> for RawQueryStats {
     fn from(value: ydb_grpc::ydb_proto::table_stats::QueryStats) -> Self {
         Self {
+            query_phases: value.query_phases.into_iter().map(Into::into).collect(),
             process_cpu_time: std::time::Duration::from_micros(value.process_cpu_time_us),
             query_plan: value.query_plan,
             query_ast: value.query_ast,

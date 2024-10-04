@@ -1,7 +1,10 @@
 use crate::errors;
 use crate::errors::{YdbError, YdbResult, YdbStatusError};
 use crate::grpc::proto_issues_to_ydb_issues;
+use crate::grpc_wrapper::raw_table_service::client::{RawQueryStats, RawTableAccessStats};
 use crate::grpc_wrapper::raw_table_service::execute_data_query::RawExecuteDataQueryResult;
+use crate::grpc_wrapper::raw_table_service::explain_data_query::RawExplainDataQueryResult;
+use crate::grpc_wrapper::raw_table_service::prepare_data_query::RawPrepareDataQueryResult;
 use crate::grpc_wrapper::raw_table_service::value::{RawResultSet, RawTypedValue, RawValue};
 use crate::trace_helpers::ensure_len_string;
 use crate::types::Value;
@@ -17,9 +20,17 @@ use ydb_grpc::ydb_proto::table::ExecuteScanQueryPartialResponse;
 pub struct QueryResult {
     pub(crate) results: Vec<ResultSet>,
     pub(crate) tx_id: String,
+    pub(crate) stats: Option<QueryStats>,
 }
 
 impl QueryResult {
+    pub fn rows_len(&self) -> usize {
+        self.results
+            .iter()
+            .map(|x| x.raw_result_set.rows.len())
+            .sum::<usize>()
+    }
+
     pub(crate) fn from_raw_result(
         error_on_truncate: bool,
         raw_res: RawExecuteDataQueryResult,
@@ -45,6 +56,7 @@ impl QueryResult {
         Ok(QueryResult {
             results,
             tx_id: raw_res.tx_meta.id,
+            stats: raw_res.query_stats.map(|x|x.into()),
         })
     }
 
@@ -77,6 +89,35 @@ impl QueryResult {
         }
     }
 }
+#[derive(Debug)]
+pub struct QueryStats {
+    pub process_cpu_time: std::time::Duration,
+    pub total_duration: std::time::Duration,
+    pub total_cpu_time: std::time::Duration,
+    pub affected_rows: u64,
+}
+
+impl RawTableAccessStats{
+    fn affected_rows(&self) -> u64 {
+        self.reads.as_ref().map(|x|x.rows).unwrap_or(0) 
+        + self.updates.as_ref().map(|x|x.rows).unwrap_or(0) 
+        + self.deletes.as_ref().map(|x|x.rows).unwrap_or(0)
+    }
+}
+
+impl From<RawQueryStats> for QueryStats{
+    fn from(value: RawQueryStats) -> Self {
+        Self {
+            process_cpu_time: value.process_cpu_time,
+            total_duration: value.total_duration,
+            total_cpu_time: value.total_cpu_time,
+            affected_rows: value.query_phases.iter()
+                .map(|x| 
+                    x.table_access.iter().map(|x| x.affected_rows()).sum::<u64>()
+                ).sum(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct ResultSet {
@@ -86,8 +127,13 @@ pub struct ResultSet {
 }
 
 impl ResultSet {
+
+    pub fn columns(&self) -> Vec<Column> {
+        make_columns(&self.columns)
+    }
+
     #[allow(dead_code)]
-    pub(crate) fn columns(&self) -> &Vec<crate::types::Column> {
+    pub(crate) fn raw_columns(&self) -> &Vec<crate::types::Column> {
         &self.columns
     }
 
@@ -136,6 +182,25 @@ impl IntoIterator for ResultSet {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct Column {
+    pub name: String,
+    pub value_type: Option<Value>,
+    pub ordinal: usize,
+}
+
+fn make_columns(columns: &[crate::types::Column]) -> Vec<Column> {
+    columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| Column {
+            name: column.name.clone(),
+            value_type: column.v_type.clone().into_value_example().ok(),
+            ordinal: index,
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 pub struct Row {
     columns: Arc<Vec<crate::types::Column>>,
@@ -144,6 +209,10 @@ pub struct Row {
 }
 
 impl Row {
+    pub fn columns(&self) -> Vec<Column> {
+        make_columns(&self.columns)
+    }
+    
     pub fn remove_field_by_name(&mut self, name: &str) -> errors::YdbResult<Value> {
         if let Some(&index) = self.columns_by_name.get(name) {
             return self.remove_field(index);
@@ -213,5 +282,54 @@ impl StreamResult {
         let raw_res = RawResultSet::try_from(proto_result_set)?;
         let result_set = ResultSet::try_from(raw_res)?;
         Ok(Some(result_set))
+    }
+}
+
+#[derive(Debug)]
+pub struct PrepareQueryResult{
+    pub query_id: String,
+    pub parameters_types: Vec<PrepareQueryParameter>, 
+}
+
+#[derive(Debug)]
+pub struct PrepareQueryParameter{
+    pub name: String,
+    pub value_type: Option<Value>
+}
+
+impl PrepareQueryResult {
+    pub(crate) fn from_raw_result(
+        raw_res: RawPrepareDataQueryResult,
+    ) -> YdbResult<Self> {
+
+        Ok(
+            Self {
+                 query_id: raw_res.query_id, 
+                 parameters_types: raw_res.parameters_types.into_iter().map(|v| 
+                    PrepareQueryParameter {
+                         name: v.name, 
+                         value_type:v.r#type.clone().into_value_example().ok() 
+                    }).collect()
+                }
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct ExplainQueryResult{
+    pub plan: String,
+    pub ast: String,
+}
+
+impl ExplainQueryResult{
+    pub(crate) fn from_raw_result(
+        raw_res: RawExplainDataQueryResult,
+    ) -> YdbResult<Self> {
+
+        //todo: parse result
+        Ok(Self {
+            plan: raw_res.query_plan,
+            ast: raw_res.query_ast,
+         })
     }
 }

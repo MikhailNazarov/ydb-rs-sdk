@@ -1,6 +1,7 @@
 use crate::client::TimeoutSettings;
 
 use crate::errors::*;
+use crate::result::{ExplainQueryResult, PrepareQueryResult};
 use crate::session::Session;
 use crate::session_pool::SessionPool;
 use crate::transaction::{AutoCommit, Mode, SerializableReadWriteTx, Transaction};
@@ -181,12 +182,12 @@ impl TableClient {
         }
     }
 
-    pub(crate) fn create_autocommit_transaction(&self, mode: Mode) -> impl Transaction {
+    pub fn create_autocommit_transaction(&self, mode: Mode) -> impl Transaction {
         AutoCommit::new(self.session_pool.clone(), mode, self.timeouts)
             .with_error_on_truncate(self.error_on_truncate)
     }
 
-    pub(crate) fn create_interactive_transaction(&self) -> impl Transaction {
+    pub fn create_interactive_transaction(&self) -> impl Transaction {
         SerializableReadWriteTx::new(self.session_pool.clone(), self.timeouts)
             .with_error_on_truncate(self.error_on_truncate)
     }
@@ -463,6 +464,24 @@ impl TableClient {
             .await
             .map_err(YdbOrCustomerError::to_ydb_error)
     }
+
+    pub async fn keepalive(&self)->YdbResult<()>{
+        let mut session = self.session_pool.session().await?;
+
+        session.keepalive().await
+    }
+
+    pub async fn prepare_data_query(&self, query: String) -> YdbResult<PrepareQueryResult> {
+        let mut session = self.session_pool.session().await?;
+        session.prepare_data_query(query).await
+    }
+
+    pub async fn explain_data_query(&self, query: String) -> YdbResult<ExplainQueryResult> {
+        let mut session = self.session_pool.session().await?;
+        session.explain_data_query(query).await
+    }
+
+
 }
 
 #[derive(Debug)]

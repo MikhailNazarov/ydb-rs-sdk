@@ -9,6 +9,11 @@ use std::fmt::{Debug, Formatter};
 use crate::grpc_wrapper::raw_table_service::value::r#type::{RawType};
 use crate::trace_helpers::ensure_len_string;
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct RawParameter {
+    pub name: String,
+    pub r#type: RawType,
+}
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct RawTypedValue {
