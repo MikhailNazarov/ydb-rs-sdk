@@ -209,6 +209,16 @@ impl Default for Box<ValueOptional> {
     }
 }
 
+impl ValueOptional {
+    pub fn get_inner_type(&self) -> &Value {
+        &self.t
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.value.is_none()
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Sign {
     Plus,
