@@ -1,6 +1,6 @@
 use ydb_grpc::{google_proto_workaround::{self, protobuf::Timestamp}, ydb_proto::topic::stream_read_message::{init_request::TopicReadSettings, InitRequest}};
 
-use crate::{client_topic::system_time_to_timestamp, grpc_connection_manager::GrpcConnectionManager, grpc_wrapper::{self, raw_topic_service::{client::RawTopicClient, stream_read::{init::RawInitResponse, RawServerMessage}}}, YdbResult};
+use crate::{client_topic::system_time_to_timestamp, grpc_connection_manager::GrpcConnectionManager, grpc_wrapper::{self, raw_topic_service::{client::RawTopicClient, stream_read::{init::RawInitResponse, RawServerMessage}}}, YdbError, YdbResult};
 
 use super::reader_options::TopicReaderOptions;
 
@@ -33,14 +33,16 @@ impl TopicWriter{
 
     async fn init(topic_service: &mut RawTopicClient, reader_options: &TopicReaderOptions)->YdbResult<String>{
 
+        let settings: YdbResult<Vec<_>> = reader_options.topics.iter().map(|t|
+            Ok::<_, YdbError>(TopicReadSettings{
+                path: t.topic_path.clone(),
+                partition_ids: t.partition_ids.clone(),
+                max_lag:  t.max_lag.map(|x|x.into()),
+                read_from: t.read_from.map(|x|system_time_to_timestamp(x)).transpose()?,
+            })).collect();
+
         let init_req_body = InitRequest{
-            topics_read_settings:  reader_options.topics.iter().map(|t|
-                TopicReadSettings{
-                    path: t.topic_path.clone(),
-                    partition_ids: t.partition_ids.clone(),
-                    max_lag:  t.max_lag.map(|x|x.into()),
-                    read_from: t.read_from.map(system_time_to_timestamp),
-                }).collect() ,
+            topics_read_settings:  settings?,
                 
             consumer: reader_options.consumer.clone(),
         };

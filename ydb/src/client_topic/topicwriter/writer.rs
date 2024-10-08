@@ -241,7 +241,7 @@ impl TopicWriter {
                         seq_no: message
                             .seq_no
                             .ok_or_else(|| YdbError::custom("empty message seq_no"))?,
-                        created_at: Some(system_time_to_timestamp(message.created_at)),
+                        created_at: Some(system_time_to_timestamp(message.created_at)?),
                         data: message.data,
                         uncompressed_size: data_size,
                         partitioning: Some(message_data::Partitioning::MessageGroupId(
