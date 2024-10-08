@@ -20,7 +20,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Instant;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;

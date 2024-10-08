@@ -33,10 +33,10 @@ impl TopicWriter{
 
     async fn init(topic_service: &mut RawTopicClient, reader_options: &TopicReaderOptions)->YdbResult<String>{
 
-        let settings: YdbResult<Vec<_>> = reader_options.topics.iter().map(|t|
+        let settings: YdbResult<Vec<_>> = reader_options.topics.iter().cloned().map(|t|
             Ok::<_, YdbError>(TopicReadSettings{
-                path: t.topic_path.clone(),
-                partition_ids: t.partition_ids.clone(),
+                path: t.topic_path,
+                partition_ids: t.partition_ids,
                 max_lag:  t.max_lag.map(|x|x.into()),
                 read_from: t.read_from.map(|x|system_time_to_timestamp(x)).transpose()?,
             })).collect();
@@ -50,7 +50,10 @@ impl TopicWriter{
         let mut stream = topic_service.stream_read(init_req_body).await?;
         let init_response = RawInitResponse::try_from(stream.receive::<RawServerMessage>().await?)?;
         
-        
+        let (messages_sender, messages_receiver): (
+            mpsc::Sender<TopicReaderMessage>,
+            mpsc::Receiver<TopicReaderMessage>,
+        ) = mpsc::channel(32_usize);
 
         Ok(init_response.session_id)
     }

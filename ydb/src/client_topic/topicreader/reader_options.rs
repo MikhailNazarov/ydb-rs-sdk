@@ -1,6 +1,7 @@
 use std::time::{Duration, SystemTime};
 
 // Message that describes topic to read.
+#[derive(Clone)]
 pub struct TopicReadOptions {
     // Topics that will be read by this session.
     pub topic_path: String,
