@@ -74,6 +74,7 @@ impl TopicClient {
         Ok(())
     }
 
+
     pub async fn drop_topic(&mut self, path: String) -> YdbResult<()> {
         let req = RawDropTopicRequest {
             operation_params: self.timeouts.operation_params(),

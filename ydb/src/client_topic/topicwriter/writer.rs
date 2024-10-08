@@ -1,3 +1,4 @@
+use crate::client_topic::system_time_to_timestamp;
 use crate::client_topic::topicwriter::message::TopicWriterMessage;
 use crate::client_topic::topicwriter::message_write_status::{MessageWriteStatus, WriteAck};
 use crate::client_topic::topicwriter::writer_options::TopicWriterOptions;
@@ -240,11 +241,7 @@ impl TopicWriter {
                         seq_no: message
                             .seq_no
                             .ok_or_else(|| YdbError::custom("empty message seq_no"))?,
-                        created_at: Some(ydb_grpc::google_proto_workaround::protobuf::Timestamp {
-                            seconds: message.created_at.duration_since(UNIX_EPOCH)?.as_secs()
-                                as i64,
-                            nanos: message.created_at.duration_since(UNIX_EPOCH)?.as_nanos() as i32,
-                        }),
+                        created_at: Some(system_time_to_timestamp(message.created_at)),
                         data: message.data,
                         uncompressed_size: data_size,
                         partitioning: Some(message_data::Partitioning::MessageGroupId(
