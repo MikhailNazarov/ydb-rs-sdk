@@ -1,7 +1,5 @@
 use ydb_grpc::ydb_proto::topic::stream_read_message::from_server::ServerMessage;
-use ydb_grpc::ydb_proto::topic::stream_read_message::{
-    FromServer, StartPartitionSessionRequest, StopPartitionSessionRequest,
-};
+use ydb_grpc::ydb_proto::topic::stream_read_message::*;
 use ydb_grpc::ydb_proto::topic::stream_read_message::{
     PartitionSessionStatusResponse, ReadResponse,
 };
@@ -28,6 +26,7 @@ pub(crate) enum RawServerMessage {
     UpdateToken(UpdateTokenResponse),
     StartPartitionSession(StartPartitionSessionRequest),
     StopPartitionSession(StopPartitionSessionRequest),
+    UpdatePartitionSession(UpdatePartitionSession),
 }
 
 pub(crate) fn create_server_status_error(message: FromServer) -> RawError {
@@ -67,6 +66,9 @@ impl TryFrom<FromServer> for RawServerMessage {
             }
             //ServerMessage::StopPartitionSessionResponse(response) =>
             ServerMessage::UpdateTokenResponse(response) => RawServerMessage::UpdateToken(response),
+            ServerMessage::UpdatePartitionSession(update_partition_session) => {
+                RawServerMessage::UpdatePartitionSession(update_partition_session)
+            }
         };
 
         Ok(raw_message)

@@ -8,6 +8,7 @@ use crate::client_topic::topicwriter::writer_reception_queue::{
 use crate::grpc_connection_manager::GrpcConnectionManager;
 
 use crate::grpc_wrapper::grpc_stream_wrapper::AsyncGrpcStreamWrapper;
+use crate::grpc_wrapper::raw_topic_service::client::RawTopicClient;
 use crate::grpc_wrapper::raw_topic_service::common::codecs::RawSupportedCodecs;
 use crate::grpc_wrapper::raw_topic_service::stream_write::init::RawInitResponse;
 use crate::grpc_wrapper::raw_topic_service::stream_write::RawServerMessage;
@@ -30,11 +31,11 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::log::trace;
 use tracing::warn;
-use ydb_grpc::ydb_proto::topic::stream_write_message;
+use ydb_grpc::ydb_proto::topic::{stream_write_message, MetadataItem};
 use ydb_grpc::ydb_proto::topic::stream_write_message::from_client::ClientMessage;
 use ydb_grpc::ydb_proto::topic::stream_write_message::init_request::Partitioning;
 use ydb_grpc::ydb_proto::topic::stream_write_message::write_request::{message_data, MessageData};
-use ydb_grpc::ydb_proto::topic::stream_write_message::{InitRequest, WriteRequest};
+use ydb_grpc::ydb_proto::topic::stream_write_message::{InitRequest, InitResponse, WriteRequest};
 
 pub(crate) enum TopicWriterMode {
     Working,
@@ -99,28 +100,17 @@ impl TopicWriter {
         connection_manager: GrpcConnectionManager,
     ) -> YdbResult<Self> {
         //TODO: split to smaller functions
-
         let mut topic_service = connection_manager
-            .get_auth_service(grpc_wrapper::raw_topic_service::client::RawTopicClient::new)
+            .get_auth_service(RawTopicClient::new)
             .await?;
 
-        let producer_id = if let Some(id) = writer_options.producer_id {
-            id
+        let producer_id =  if let Some(id) = &writer_options.producer_id {
+            id.clone()
         } else {
             uuid::Uuid::new_v4().to_string()
         };
 
-        let init_request_body = InitRequest {
-            path: writer_options.topic_path.clone(),
-            producer_id: producer_id.clone(),
-            write_session_meta: writer_options.session_metadata.clone().unwrap_or_default(),
-            get_last_seq_no: writer_options.auto_seq_no,
-            partitioning: Some(Partitioning::MessageGroupId(producer_id.clone())),
-        };
-
-        let mut stream = topic_service.stream_write(init_request_body).await?;
-        let init_response = RawInitResponse::try_from(stream.receive::<RawServerMessage>().await?)?;
-
+       
         let (messages_sender, messages_receiver): (
             mpsc::Sender<TopicWriterMessage>,
             mpsc::Receiver<TopicWriterMessage>,
@@ -213,6 +203,8 @@ impl TopicWriter {
         })
     }
 
+  
+
     async fn write_loop_iteration(
         messages_receiver: &mut Receiver<TopicWriterMessage>,
         task_params: &WriterPeriodicTaskParams,
@@ -247,6 +239,10 @@ impl TopicWriter {
                         partitioning: Some(message_data::Partitioning::MessageGroupId(
                             task_params.producer_id.clone().unwrap_or_default(),
                         )),
+                        metadata_items: message.metadata.into_iter().map(|m|MetadataItem{
+                            key: m.key,
+                            value: m.value,
+                        }).collect(),
                     });
                 }
                 Ok(None) => {

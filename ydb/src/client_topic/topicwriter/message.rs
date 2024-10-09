@@ -12,6 +12,13 @@ pub struct TopicWriterMessage {
     pub(crate) created_at: time::SystemTime,
 
     pub(crate) data: Vec<u8>,
+    pub(crate) metadata: Vec<TopicWriteMetadataItem>,
+}
+
+#[derive(Clone)]
+pub struct TopicWriteMetadataItem {
+    pub key: String,
+    pub value: Vec<u8>,
 }
 
 impl TopicWriterMessageBuilder {
