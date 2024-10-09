@@ -267,6 +267,7 @@ impl TopicWriter {
                     client_message: Some(ClientMessage::WriteRequest(WriteRequest {
                         messages,
                         codec: 1,
+                        tx: None,
                     })),
                 })
                 .unwrap(); // TODO: HANDLE ERROR
