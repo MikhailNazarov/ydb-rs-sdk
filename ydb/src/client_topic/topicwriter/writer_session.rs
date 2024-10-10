@@ -75,7 +75,7 @@ impl TopicWriterSession {
     }
 
     /// Runs topic writer session loop
-    pub(crate) async fn run(&mut self) -> YdbResult<()> {
+    pub(crate) async fn run(&self, cancellation_token: CancellationToken) -> YdbResult<()> {
         { // block for shorter guard lifetime
             if let SessionState::Opened(_) = &*self.state.read().await {
                 trace!("Topic writer session is already opened");
@@ -95,7 +95,7 @@ impl TopicWriterSession {
         let (message_sender, message_receiver) = mpsc::channel(32_usize);
         let (error_sender, error_receiver) = mpsc::channel(1_usize);
         
-        let cancellation_token = CancellationToken::new();
+      
 
         let sender = res.stream.clone_sender();
         let receiver_loop = self.spawn_receiver(
@@ -111,13 +111,12 @@ impl TopicWriterSession {
             cancellation_token.clone()
         );
 
-       
-        self.state = Arc::new(RwLock::new( SessionState::Opened(ActiveSession {
+        *self.state.write().await = SessionState::Opened(ActiveSession {
             session_id: res.inner.session_id.clone(),            
             client,
             cancellation_token: cancellation_token.clone(),            
             message_sender,            
-        })));
+        });
 
         Ok(select! {
             _ = cancellation_token.cancelled() => {},
@@ -231,7 +230,7 @@ impl TopicWriterSession {
     }
 
     /// Process Init request
-    async fn init_request(&mut self)->YdbResult<InitResponse>{
+    async fn init_request(&self)->YdbResult<InitResponse>{
 
         match &*self.state.read().await{
             SessionState::Closed(_) =>{},

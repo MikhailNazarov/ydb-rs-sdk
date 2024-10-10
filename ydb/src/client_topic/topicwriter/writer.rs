@@ -17,11 +17,12 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, Mutex};
 
+use tokio_util::sync::CancellationToken;
+use tracing::error;
 use tracing::log::trace;
 use ydb_grpc::ydb_proto::topic::stream_write_message;
 
 
-use super::message::TopicWriterSessionMessage;
 use super::writer_reception_queue::TopicWriterReceptionQueue;
 use super::writer_session::TopicWriterSession;
 
@@ -36,7 +37,7 @@ pub(crate) enum TopicWriterMode {
 #[allow(dead_code)]
 pub struct TopicWriter {
 
-    session: TopicWriterSession,
+    session: Arc<TopicWriterSession>,
 
     // pub(crate) path: String,
     // pub(crate) producer_id: Option<String>,
@@ -54,7 +55,8 @@ pub struct TopicWriter {
     // writer_loop: JoinHandle<()>,
     // receive_messages_loop: JoinHandle<()>,
 
-    // cancellation_token: CancellationToken,
+    session_loop: tokio::task::JoinHandle<()>,
+    cancellation_token: CancellationToken,
     // writer_state: Arc<Mutex<TopicWriterMode>>,
 
     confirmation_reception_queue: Arc<Mutex<TopicWriterReceptionQueue>>,
@@ -92,13 +94,31 @@ impl TopicWriter {
         writer_options: TopicWriterOptions,
         connection_manager: GrpcConnectionManager,
     ) -> YdbResult<Self> {
-        let session = TopicWriterSession::with_opts(connection_manager, writer_options.clone());
-        //session.start().await?;
+        let session = Arc::new(            
+        TopicWriterSession::with_opts(connection_manager, writer_options.clone())            
+        );
+        let cancellation_token = CancellationToken::new();
+        let loop_session = session.clone();
+
+        let ct = cancellation_token.clone();
+        let session_loop = tokio::spawn(async move {            
+            loop{
+                if ct.is_cancelled(){
+                    break;
+                }
+                if let Err(e) = loop_session.run(ct.clone()).await{
+                    error!("Error in writer loop: {}", e);
+                }
+            }
+        });
+             
         Ok(Self{
             session,
+            session_loop,
             last_auto_seq_num: AtomicI64::new(0),
             confirmation_reception_queue: Arc::new(Mutex::new(TopicWriterReceptionQueue::new())),
             opts: writer_options,
+            cancellation_token,
         })
         /*
         let mut topic_service = connection_manager
@@ -421,11 +441,12 @@ impl TopicWriter {
         Ok(())
     }
 
-    pub async fn flush(&self) -> YdbResult<()> {
+    /// Flushes all reception tickets 
+    pub async fn flush_tickets(&self) -> YdbResult<()> {
         self.is_cancelled().await?;
 
         let flush_op_completed = {
-            let mut reception_queue = self.confirmation_reception_queue.lock().unwrap();
+            let mut reception_queue = self.confirmation_reception_queue.lock().await;
             reception_queue.init_flush_op()?
         };
 
@@ -433,7 +454,7 @@ impl TopicWriter {
     }
 
     async fn is_cancelled(&self) -> YdbResult<()> {
-        let state = self.writer_state.lock().unwrap();
+        let state = self.session.state.error;
         match state.deref() {
             TopicWriterMode::Working => Ok(()),
             TopicWriterMode::FinishedWithError(err) => Err(err.clone()),
