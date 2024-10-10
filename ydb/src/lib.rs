@@ -98,6 +98,7 @@ pub(crate) mod waiter;
 
 #[cfg(test)]
 mod types_test;
+pub(crate) mod utils;
 
 pub use client_coordination::client::CoordinationClient;
 pub use client_coordination::list_types::{

@@ -1,41 +1,29 @@
-use crate::client_topic::system_time_to_timestamp;
 use crate::client_topic::topicwriter::message::TopicWriterMessage;
-use crate::client_topic::topicwriter::message_write_status::{MessageWriteStatus, WriteAck};
+use crate::client_topic::topicwriter::message_write_status::MessageWriteStatus;
 use crate::client_topic::topicwriter::writer_options::TopicWriterOptions;
 use crate::client_topic::topicwriter::writer_reception_queue::{
-    TopicWriterReceptionQueue, TopicWriterReceptionTicket, TopicWriterReceptionType,
+    TopicWriterReceptionTicket, TopicWriterReceptionType,
 };
 use crate::grpc_connection_manager::GrpcConnectionManager;
 
-use crate::grpc_wrapper::grpc_stream_wrapper::AsyncGrpcStreamWrapper;
-use crate::grpc_wrapper::raw_topic_service::client::RawTopicClient;
-use crate::grpc_wrapper::raw_topic_service::common::codecs::RawSupportedCodecs;
-use crate::grpc_wrapper::raw_topic_service::stream_write::init::RawInitResponse;
-use crate::grpc_wrapper::raw_topic_service::stream_write::RawServerMessage;
-use crate::{grpc_wrapper, YdbError, YdbResult};
-use std::borrow::{Borrow, BorrowMut};
+use crate::{YdbError, YdbResult};
 
 use std::future::Future;
-use std::ops::Deref;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{self, AtomicI64};
+use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Instant;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::Receiver;
-use tokio::task::JoinHandle;
+use tokio::sync::{mpsc, Mutex};
 
-use tokio::time::timeout;
-use tokio_util::sync::CancellationToken;
 use tracing::log::trace;
-use tracing::warn;
-use ydb_grpc::ydb_proto::topic::{stream_write_message, MetadataItem};
-use ydb_grpc::ydb_proto::topic::stream_write_message::from_client::ClientMessage;
-use ydb_grpc::ydb_proto::topic::stream_write_message::init_request::Partitioning;
-use ydb_grpc::ydb_proto::topic::stream_write_message::write_request::{message_data, MessageData};
-use ydb_grpc::ydb_proto::topic::stream_write_message::{InitRequest, InitResponse, WriteRequest};
+use ydb_grpc::ydb_proto::topic::stream_write_message;
+
+
+use super::message::TopicWriterSessionMessage;
+use super::writer_reception_queue::TopicWriterReceptionQueue;
+use super::writer_session::TopicWriterSession;
 
 pub(crate) enum TopicWriterMode {
     Working,
@@ -47,27 +35,31 @@ pub(crate) enum TopicWriterMode {
 /// It isn't handle lost connection to the server and have some unimplemented method.
 #[allow(dead_code)]
 pub struct TopicWriter {
-    pub(crate) path: String,
-    pub(crate) producer_id: Option<String>,
-    pub(crate) partition_id: i64,
-    pub(crate) session_id: String,
-    pub(crate) last_seq_num_handled: i64,
-    pub(crate) write_request_messages_chunk_size: usize,
-    pub(crate) write_request_send_messages_period: Duration,
 
-    pub(crate) auto_set_seq_no: bool,
-    pub(crate) codecs_from_server: RawSupportedCodecs,
+    session: TopicWriterSession,
 
-    writer_message_sender: mpsc::Sender<TopicWriterMessage>,
-    writer_loop: JoinHandle<()>,
-    receive_messages_loop: JoinHandle<()>,
+    // pub(crate) path: String,
+    // pub(crate) producer_id: Option<String>,
+    // pub(crate) partition_id: i64,
+    // pub(crate) session_id: String,
+    pub(crate) last_auto_seq_num: AtomicI64,
+    pub(crate) opts: TopicWriterOptions,
+    // pub(crate) write_request_messages_chunk_size: usize,
+    // pub(crate) write_request_send_messages_period: Duration,
 
-    cancellation_token: CancellationToken,
-    writer_state: Arc<Mutex<TopicWriterMode>>,
+    // pub(crate) auto_set_seq_no: bool,
+    // pub(crate) codecs_from_server: RawSupportedCodecs,
+
+    //writer_message_sender: mpsc::Sender<TopicWriterMessage>,
+    // writer_loop: JoinHandle<()>,
+    // receive_messages_loop: JoinHandle<()>,
+
+    // cancellation_token: CancellationToken,
+    // writer_state: Arc<Mutex<TopicWriterMode>>,
 
     confirmation_reception_queue: Arc<Mutex<TopicWriterReceptionQueue>>,
 
-    pub(crate) connection_manager: GrpcConnectionManager,
+    // pub(crate) connection_manager: GrpcConnectionManager,
 }
 
 #[allow(dead_code)]
@@ -95,11 +87,20 @@ struct WriterPeriodicTaskParams {
 }
 
 impl TopicWriter {
+    /// Create new TopicWriter
     pub(crate) async fn new(
         writer_options: TopicWriterOptions,
         connection_manager: GrpcConnectionManager,
     ) -> YdbResult<Self> {
-        //TODO: split to smaller functions
+        let session = TopicWriterSession::with_opts(connection_manager, writer_options.clone());
+        //session.start().await?;
+        Ok(Self{
+            session,
+            last_auto_seq_num: AtomicI64::new(0),
+            confirmation_reception_queue: Arc::new(Mutex::new(TopicWriterReceptionQueue::new())),
+            opts: writer_options,
+        })
+        /*
         let mut topic_service = connection_manager
             .get_auth_service(RawTopicClient::new)
             .await?;
@@ -201,10 +202,11 @@ impl TopicWriter {
             confirmation_reception_queue,
             connection_manager,
         })
+        */
     }
 
   
-
+/*
     async fn write_loop_iteration(
         messages_receiver: &mut Receiver<TopicWriterMessage>,
         task_params: &WriterPeriodicTaskParams,
@@ -271,6 +273,7 @@ impl TopicWriter {
         Ok(())
     }
 
+
     async fn receive_messages_loop_iteration(
         server_messages_receiver: &mut AsyncGrpcStreamWrapper<
             stream_write_message::FromClient,
@@ -316,7 +319,8 @@ impl TopicWriter {
         }
         Ok(())
     }
-
+*/
+    /// Stops writer
     pub async fn stop(self) -> YdbResult<()> {
         trace!("Stopping...");
 
@@ -341,13 +345,15 @@ impl TopicWriter {
         Ok(())
     }
 
+    /// Writes message to topic without acknowledgement
     pub async fn write(&mut self, message: TopicWriterMessage) -> YdbResult<()> {
         self.write_message(message, None).await?;
         Ok(())
     }
 
+    /// Writes message to topic and and waits for message will be acknowledged
     pub async fn write_with_ack(
-        &mut self,
+        &self,
         message: TopicWriterMessage,
     ) -> YdbResult<MessageWriteStatus> {
         let (tx, rx): (
@@ -359,58 +365,53 @@ impl TopicWriter {
         Ok(rx.await?)
     }
 
+    /// Returns future that will be resolved when message will be acknowledged
     pub async fn write_with_ack_future(
         &mut self,
-        _message: TopicWriterMessage,
+        message: TopicWriterMessage,
     ) -> YdbResult<AckFuture> {
         let (tx, rx): (
             tokio::sync::oneshot::Sender<MessageWriteStatus>,
             tokio::sync::oneshot::Receiver<MessageWriteStatus>,
         ) = tokio::sync::oneshot::channel();
 
-        self.write_message(_message, Some(tx)).await?;
+        self.write_message(message, Some(tx)).await?;
         Ok(AckFuture { receiver: rx })
     }
 
+    /// Writes message to topic.
+    /// 
+    /// If `auto_seq_no` is enabled, `message.seq_no` will be set automatically,
+    /// when `message.seq_no` is not set or error occurs if `message.seq_no` is set.
     async fn write_message(
-        &mut self,
+        &self,
         mut message: TopicWriterMessage,
         wait_ack: Option<tokio::sync::oneshot::Sender<MessageWriteStatus>>,
     ) -> YdbResult<()> {
         self.is_cancelled().await?;
 
-        if self.auto_set_seq_no {
+        let message_seqno = if self.opts.auto_seq_no {
             if message.seq_no.is_some() {
                 return Err(YdbError::custom(
                     "force set message seqno possible only if auto_set_seq_no disabled",
                 ));
             }
-            message.seq_no = Some(self.last_seq_num_handled + 1);
-        };
-
-        let message_seqno = if let Some(mess_seqno) = message.seq_no {
-            self.last_seq_num_handled = mess_seqno;
-            mess_seqno
+            self.last_auto_seq_num.fetch_add(1, atomic::Ordering::Relaxed) + 1            
         } else {
-            return Err(YdbError::custom("need to set message seq_no"));
-        };
-
-        self.writer_message_sender
-            .borrow_mut()
-            .send(message)
-            .await
-            .map_err(|err| {
-                YdbError::custom(format!("can't send the message to channel: {}", err))
-            })?;
+            message.seq_no.ok_or_else( || YdbError::custom("need to set message seq_no".to_owned()))?
+        };        
+        message.seq_no = message_seqno.into();
+               
+        self.session.write(message.try_into()?).await?;        
 
         let reception_type = wait_ack.map_or(
             TopicWriterReceptionType::NoConfirmationExpected,
             TopicWriterReceptionType::AwaitingConfirmation,
         );
 
-        {
-            // bracket needs for release mutex as soon as possible - before await
-            let mut reception_queue = self.confirmation_reception_queue.lock().unwrap();
+        { // bracket needs for release mutex as soon as possible - before await
+            
+            let mut reception_queue = self.confirmation_reception_queue.lock().await;
             reception_queue.add_ticket(TopicWriterReceptionTicket::new(
                 message_seqno,
                 reception_type,

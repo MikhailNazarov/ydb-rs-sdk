@@ -1,10 +1,12 @@
+use tokio::sync::oneshot;
+
 use crate::client_topic::topicwriter::message_write_status::MessageWriteStatus;
 use crate::grpc_wrapper::raw_errors::{RawError, RawResult};
 
 use std::collections::VecDeque;
 
 pub(crate) enum TopicWriterReceptionType {
-    AwaitingConfirmation(tokio::sync::oneshot::Sender<MessageWriteStatus>),
+    AwaitingConfirmation(oneshot::Sender<MessageWriteStatus>),
     NoConfirmationExpected,
 }
 
@@ -59,24 +61,21 @@ impl TopicWriterReceptionQueue {
     }
 
     pub(crate) fn init_flush_op(&mut self) -> RawResult<tokio::sync::oneshot::Receiver<()>> {
-        let (tx, rx): (
-            tokio::sync::oneshot::Sender<()>,
-            tokio::sync::oneshot::Receiver<()>,
-        ) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         if self.message_receipt_signals_queue.is_empty() {
             tx.send(()).unwrap();
             return Ok(rx);
         }
-        return match self.message_receipt_signals_queue.back_mut() {
-            None => Err(RawError::Custom(
-                "Programming error, should not be happening".to_string(),
-            )),
-            Some(ticket) => {
+        self.message_receipt_signals_queue
+            .back_mut()
+            .map(|ticket| {
                 ticket.enable_flush_flag();
                 self.flush_finished_sender = Some(tx);
-                Ok(rx)
-            }
-        };
+                rx
+            })
+            .ok_or_else(|| {
+                RawError::Custom("Programming error, should not be happening".to_string())
+            })
     }
 
     pub fn try_get_ticket(&mut self) -> Option<TopicWriterReceptionTicket> {

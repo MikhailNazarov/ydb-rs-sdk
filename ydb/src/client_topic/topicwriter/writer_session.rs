@@ -1,112 +1,161 @@
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{ sync::Arc, time::{Duration, Instant}};
 
-use tokio::{sync::{mpsc, Mutex}, task::JoinHandle, time::timeout};
+use tokio::{select, sync::{mpsc::{self, UnboundedSender}, Mutex, RwLock}, task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, warn};
-use ydb_grpc::ydb_proto::topic::stream_write_message::{self, from_client::ClientMessage, init_request, write_request::{message_data::{self, Partitioning}, MessageData}, InitRequest, WriteRequest};
+use ydb_grpc::ydb_proto::topic::{stream_write_message::{self, from_client::ClientMessage, init_request, write_request::{message_data::{self, Partitioning}, MessageData}, FromClient, InitRequest, WriteRequest}, MetadataItem};
 
-use crate::{client_topic::system_time_to_timestamp, grpc_connection_manager::GrpcConnectionManager, grpc_wrapper::{grpc_stream_wrapper::AsyncGrpcStreamWrapper, raw_topic_service::{client::RawTopicClient, stream_write::{init::RawInitResponse, RawServerMessage}}}, TopicWriterMessage, TopicWriterOptions, YdbError, YdbResult};
+use crate::{ grpc_connection_manager::GrpcConnectionManager, grpc_wrapper::{grpc_stream_wrapper::AsyncGrpcStreamWrapper, raw_topic_service::{client::RawTopicClient, stream_write::{init::RawInitResponse, RawServerMessage}}}, utils::system_time_to_timestamp, TopicWriterMessage, TopicWriterOptions, TopicWriterOptionsBuilder, YdbError, YdbResult};
 
-use super::{message_write_status::WriteAck, writer::TopicWriterMode, writer_reception_queue::TopicWriterReceptionQueue};
+use super::{message::TopicWriterSessionMessage, message_write_status::WriteAck, writer_reception_queue::TopicWriterReceptionQueue};
 
+/// State of topic writer session
 enum SessionState {
-    Closed,
+    /// Session is closed
+    /// `Error` is set if session is closed with error.
+    /// `None` if session is closed without error or just created
+    Closed(Option<YdbError>),
+    /// Session is opened
+    /// `ActiveSession` contains active session data
     Opened(ActiveSession),
 }
 
+/// Stream for topic writer
 type TopicWriteStream =
     AsyncGrpcStreamWrapper<stream_write_message::FromClient, stream_write_message::FromServer>;
 
+/// Active session data for topic writer
 struct ActiveSession {
-    session_id: String,
-    stream: TopicWriteStream,
-    client: RawTopicClient,
+    /// Session id
+    session_id: String,    
 
-  
+    /// Topic client
+    client: RawTopicClient,  
+
+    /// Cancellation token for session
     cancellation_token: CancellationToken,
 
-    receiver_loop: JoinHandle<()>,
-    sender_loop: JoinHandle<()>,
+    /// Message sender
+    message_sender: mpsc::Sender<TopicWriterSessionMessage>,    
 }
 
+/// Session for topic writer
 pub(crate) struct TopicWriterSession {
+    /// YDB connection manager
     connection_manager: GrpcConnectionManager,
-    opts: TopicWriterOptions,
-    state: SessionState,
-    producer_id: String,   
     
+    /// Writer options
+    opts: TopicWriterOptions,
+
+    /// Session state
+    state: Arc<RwLock<SessionState>>,
+
+    /// Producer id
+    producer_id: String,   
 }
 
 impl TopicWriterSession {
-    pub(crate) fn new(connection_manager: GrpcConnectionManager, opts: TopicWriterOptions) -> Self {
-        let producer_id = Self::build_producer_id(&opts);
 
+    /// Creates new topic writer session with given connection manager and default options
+    pub(crate) fn new(connection_manager: GrpcConnectionManager) -> Self {
+        Self::with_opts(connection_manager, TopicWriterOptionsBuilder::default().build().unwrap())
+    }
+
+    /// Creates new topic writer session with given connection manager and options
+    pub(crate) fn with_opts(connection_manager: GrpcConnectionManager, opts: TopicWriterOptions) -> Self { 
         
+        let producer_id = Self::get_producer_id(&opts);
         
         TopicWriterSession {
             connection_manager,
             opts,
-            state: SessionState::Closed,
+            state: Arc::new(RwLock::new(SessionState::Closed(None))),
             producer_id,
-
-           
         }
     }
 
-    pub(crate) async fn connect(&mut self) -> YdbResult<()> {
+    /// Runs topic writer session loop
+    pub(crate) async fn run(&mut self) -> YdbResult<()> {
+        { // block for shorter guard lifetime
+            if let SessionState::Opened(_) = &*self.state.read().await {
+                trace!("Topic writer session is already opened");
+                return Ok(());
+            }
+        }
+
+        trace!("Starting topic writer session");
+
         let client = self
             .connection_manager
             .get_auth_service(RawTopicClient::new)
             .await?;
 
-        let mut res = self.init().await?;
+        let mut res = self.init_request().await?;
 
-        let (messages_sender, mut messages_receiver): (
-            mpsc::Sender<TopicWriterMessage>,
-            mpsc::Receiver<TopicWriterMessage>,
-        ) = mpsc::channel(32_usize);
+        let (message_sender, message_receiver) = mpsc::channel(32_usize);
+        let (error_sender, error_receiver) = mpsc::channel(1_usize);
+        
         let cancellation_token = CancellationToken::new();
 
+        let sender = res.stream.clone_sender();
         let receiver_loop = self.spawn_receiver(
-            messages_receiver,
-            &mut res.stream,
+            message_receiver,
+           sender,
+           error_sender.clone(),
             cancellation_token.clone(),
         );
 
-        self.state = SessionState::Opened(ActiveSession {
-            session_id: res.inner.session_id.clone(),
-            stream: res.stream,
-            client,
-            cancellation_token,
-            receiver_loop,
-            sender_loop,
-        });
+        let sender_loop = self.spawn_sender(
+            res.stream,
+            error_sender.clone(),
+            cancellation_token.clone()
+        );
 
-        Ok(())
+       
+        self.state = Arc::new(RwLock::new( SessionState::Opened(ActiveSession {
+            session_id: res.inner.session_id.clone(),            
+            client,
+            cancellation_token: cancellation_token.clone(),            
+            message_sender,            
+        })));
+
+        Ok(select! {
+            _ = cancellation_token.cancelled() => {},
+            _ = receiver_loop => {},
+            _ = sender_loop => {},
+        })
     }
     
-    fn build_producer_id(opts: &TopicWriterOptions) -> String {
-        if let Some(id) = &opts.producer_id {
+    /// Get producer id from options according to `deduplication_enabled` option.
+    /// 
+    /// If `deduplication_enabled` is false, empty string is returned
+    /// otherwise `producer_id` option or generated value is returned
+    fn get_producer_id(opts: &TopicWriterOptions) -> String {
+        if !opts.deduplication_enabled{
+            "".to_owned()
+        } else if let Some(id) = &opts.producer_id {
             id.clone()
-        } else {
+        } else{
             uuid::Uuid::new_v4().to_string()
         }
     }
 
+    /// Spawns receiver loop
     fn spawn_receiver(
         &self, 
-        messages_receiver: mpsc::Receiver<TopicWriterMessage>, 
-        mut stream: &mut TopicWriteStream,       
+        messages_receiver: mpsc::Receiver<TopicWriterSessionMessage>, 
+        sender: UnboundedSender<FromClient>,
+        error_sender: mpsc::Sender<YdbError>,
         ct: CancellationToken
     )->JoinHandle<()>{
 
-        let params = self.receiver_task_params(&mut stream);
+        let params = self.receiver_task_params(sender);
         
         let messages_receiver = messages_receiver;
 
         tokio::spawn(async move {
-            let mut message_receiver = messages_receiver; // force move inside
-            let params = params; // force move inside
+            // force move inside
+            let mut message_receiver = messages_receiver;             
 
             loop {
                 match Self::write_loop_iteration(
@@ -116,10 +165,9 @@ impl TopicWriterSession {
                 .await
                 {
                     Ok(()) => {}
-                    Err(writer_iteration_error) => {
+                    Err(error) => {
                         ct.cancel();
-                        let mut writer_state = writer_state_ref_writer_loop.lock().unwrap(); // TODO handle error
-                        *writer_state = TopicWriterMode::FinishedWithError(writer_iteration_error);
+                        error_sender.send(error).await.unwrap();                        
                         return;
                     }
                 }
@@ -131,16 +179,25 @@ impl TopicWriterSession {
         })
     }
 
+    async fn handle_error(state: Arc<RwLock<SessionState>>, ct: CancellationToken, error: YdbError){
+        ct.cancel();
+        let mut guard = state.write().await;        
+        *guard = SessionState::Closed(Some(error));
+    }
+
+    /// Spawns sender loop
     fn spawn_sender(
+        &self,
         stream: TopicWriteStream,
+        error_sender: mpsc::Sender<YdbError>,
         ct: CancellationToken
     )->JoinHandle<()>{
         tokio::spawn(async move {
             let mut stream = stream; // force move inside
-            let mut reception_queue = message_loop_reception_queue; // force move inside
+            // let mut reception_queue = message_loop_reception_queue; // force move inside
             
-            let writer_state_ref_message_receive_loop = topic_writer_state.clone();
-            let message_loop_reception_queue = confirmation_reception_queue.clone();
+            // let writer_state_ref_message_receive_loop = topic_writer_state.clone();
+            // let message_loop_reception_queue = confirmation_reception_queue.clone();
 
 
             loop {
@@ -151,13 +208,10 @@ impl TopicWriterSession {
                                                           &reception_queue) => {
                         match message_receive_it_res {
                             Ok(_) => {}
-                            Err(receive_message_iteration_error) => {
+                            Err(e) => {
                                 ct.cancel();
-                                warn!("error receive message for topic writer receiver stream loop: {}", &receive_message_iteration_error);
-                                let mut writer_state =
-                                    writer_state_ref_message_receive_loop.lock().unwrap(); // TODO handle error
-                                *writer_state =
-                                    TopicWriterMode::FinishedWithError(receive_message_iteration_error);
+                                warn!("error receive message for topic writer receiver stream loop: {}", &e);
+                                error_sender.send(e).await.unwrap();
                                 return ;
                             }
                         }
@@ -167,20 +221,20 @@ impl TopicWriterSession {
         })
     }
 
-    fn receiver_task_params(&self, stream: &mut TopicWriteStream)->WriterPeriodicTaskParams{
+    fn receiver_task_params(&self, sender: UnboundedSender<FromClient>)->WriterPeriodicTaskParams{
         WriterPeriodicTaskParams {
             write_request_messages_chunk_size: self.opts.write_request_messages_chunk_size,
             write_request_send_messages_period: self.opts.write_request_send_messages_period,
             producer_id: self.producer_id.clone(),
-            request_stream: stream.clone_sender(),
+            sender,
         }
     }
 
     /// Process Init request
-    async fn init(&mut self)->YdbResult<InitResponse>{
+    async fn init_request(&mut self)->YdbResult<InitResponse>{
 
-        match &mut self.state{
-            SessionState::Closed =>{},
+        match &*self.state.read().await{
+            SessionState::Closed(_) =>{},
             SessionState::Opened(_)=> return Err(YdbError::custom("init: topic writer session is already opened")),
         };        
         let mut client = self.connection_manager
@@ -250,7 +304,7 @@ impl TopicWriterSession {
     }
 
     async fn write_loop_iteration(
-        messages_receiver: &mut mpsc::Receiver<TopicWriterMessage>,
+        messages_receiver: &mut mpsc::Receiver<TopicWriterSessionMessage>,
         task_params: &WriterPeriodicTaskParams,
     ) -> YdbResult<()> {
         let start = Instant::now();
@@ -274,10 +328,8 @@ impl TopicWriterSession {
                 Ok(Some(message)) => {
                     let data_size = message.data.len() as i64;
                     messages.push(MessageData {
-                        seq_no: message
-                            .seq_no
-                            .ok_or_else(|| YdbError::custom("empty message seq_no"))?,
-                        created_at: Some(system_time_to_timestamp(message.created_at)?),
+                        seq_no: message.seq_no,
+                        created_at: Some(message.created_at),
                         data: message.data,
                         uncompressed_size: data_size,
                         partitioning: Some(message_data::Partitioning::MessageGroupId(
@@ -301,8 +353,7 @@ impl TopicWriterSession {
 
         if !messages.is_empty() {
             trace!("Sending topic message to grpc stream...");
-            task_params
-                .request_stream
+            task_params.sender
                 .send(stream_write_message::FromClient {
                     client_message: Some(ClientMessage::WriteRequest(WriteRequest {
                         messages,
@@ -313,6 +364,16 @@ impl TopicWriterSession {
                 .unwrap(); // TODO: HANDLE ERROR
         }
         Ok(())
+    }
+
+    pub(crate) async fn write(&self, message: TopicWriterSessionMessage)-> YdbResult<()>{
+        match &*self.state.read().await{
+            SessionState::Closed(_) => Err(YdbError::Custom("Session is closed".to_owned())),
+            SessionState::Opened(session)=> {
+                session.message_sender.send(message).await
+                    .map_err(|err|YdbError::custom(format!("can't send the message to channel: {}", err)))
+            },
+        }
     }
 
 }
@@ -327,5 +388,5 @@ struct WriterPeriodicTaskParams {
     write_request_messages_chunk_size: usize,
     write_request_send_messages_period: Duration,
     producer_id: String,
-    request_stream: mpsc::UnboundedSender<stream_write_message::FromClient>,
+    sender: mpsc::UnboundedSender<stream_write_message::FromClient>,
 }
