@@ -73,7 +73,7 @@ impl Client {
     /// Wait initialization completed
     ///
     /// Wait all background process get first successfully result and client fully
-    /// available to work.
+    /// available to' work.
     pub async fn wait(&self) -> YdbResult<()> {
         trace!("waiting_token");
         self.credentials.token_cache.wait().await?;

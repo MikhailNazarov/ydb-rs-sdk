@@ -21,6 +21,7 @@ pub struct TopicWriterOptions {
     pub(crate) auto_seq_no: bool,
     #[builder(default = "true")]
     pub(crate) auto_created_at: bool,
+    
     #[builder(default = "10")]
     pub(crate) write_request_messages_chunk_size: usize,
     #[builder(default = "Duration::from_secs(1)")]
