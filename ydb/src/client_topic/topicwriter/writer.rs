@@ -3,61 +3,27 @@ use crate::client_topic::topicwriter::message_write_status::MessageWriteStatus;
 use crate::client_topic::topicwriter::writer_options::TopicWriterOptions;
 use crate::grpc_connection_manager::GrpcConnectionManager;
 
-use crate::grpc_wrapper::grpc_stream_wrapper::AsyncGrpcStreamWrapper;
 use crate::{YdbError, YdbResult};
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 
+use tokio::task::JoinHandle;
 use tracing::log::trace;
-use tracing::warn;
-use ydb_grpc::ydb_proto::topic::stream_write_message;
+use tracing::error;
 
 use super::writer_session::WriterSession;
 
-pub(crate) enum TopicWriterState {
-    Idle,
-    Working(WriterSession),
-    FinishedWithError(YdbError),
-}
 
-/// TopicWriter at initial state of implementation
-/// it really doesn't ready for use. For example
-/// It isn't handle lost connection to the server and have some unimplemented method.
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct TopicWriter {
-    // pub(crate) path: String,
-    // pub(crate) producer_id: Option<String>,
-    // pub(crate) partition_id: i64,
-    // pub(crate) session_id: String,
-    // pub(crate) last_seq_num_handled: i64,
-    // pub(crate) write_request_messages_chunk_size: usize,
-    // pub(crate) write_request_send_messages_period: Duration,
-
-    // pub(crate) auto_set_seq_no: bool,
-    // pub(crate) codecs_from_server: RawSupportedCodecs,
-
-    // writer_message_sender: mpsc::Sender<TopicWriterMessage>,
-    // writer_loop: JoinHandle<()>,
-    // receive_messages_loop: JoinHandle<()>,
-
-    // cancellation_token: CancellationToken,
-    // writer_state: Arc<Mutex<TopicWriterState>>,
-
-    // confirmation_reception_queue: Arc<Mutex<TopicWriterReceptionQueue>>,
-
-    // pub(crate) connection_manager: GrpcConnectionManager,
-
-    producer_id: String,
-    opts: TopicWriterOptions,
-    connection_manager: GrpcConnectionManager,
-    state: Arc<Mutex<TopicWriterState>>,
-    
+    commands: mpsc::Sender<Command>,
+    run_loop: Arc<JoinHandle<()>>,
 }
 
 #[allow(dead_code)]
@@ -77,18 +43,12 @@ impl Future for AckFuture {
     }
 }
 
-struct WriterPeriodicTaskParams {
-    write_request_messages_chunk_size: usize,
-    write_request_send_messages_period: Duration,
-    producer_id: Option<String>,
-    request_stream: mpsc::UnboundedSender<stream_write_message::FromClient>,
+enum Command{
+    Write(TopicWriterMessage, Option<oneshot::Sender<MessageWriteStatus>>),
+    Stop
 }
 
-pub(crate) type WriterStream = AsyncGrpcStreamWrapper<stream_write_message::FromClient, stream_write_message::FromServer>;
-
 impl TopicWriter {
-
-    
 
     pub(crate) fn new(
         opts: TopicWriterOptions,
@@ -98,76 +58,80 @@ impl TopicWriter {
         let producer_id = opts.producer_id.clone().unwrap_or_else(||{
             uuid::Uuid::new_v4().to_string()
         });
+        let (commands_sender,commands_receiver) = mpsc::channel(32);
 
-        // let session = WriterSession::run_session(
-        //     producer_id,
-        //     &opts,
-        //     connection_manager.clone()
-        // ).await?;
-        Self { 
-            producer_id,
-            opts,
-            connection_manager,
-            state: Arc::new(Mutex::new(TopicWriterState::Idle)), 
-            //Arc::new(Mutex::new(TopicWriterState::Working(session))) 
+        let run_loop = tokio::spawn(async move {
+            Self::run_loop(producer_id, opts, connection_manager,  commands_receiver).await;
+        });
+
+        Self {
+            commands: commands_sender,
+            run_loop: Arc::new(run_loop),
         }
     }
 
-    pub(crate) async fn run(&self)->YdbResult<()>{
+    async fn run_loop(producer_id: String, opts: TopicWriterOptions, connection_manager: GrpcConnectionManager, mut rx: mpsc::Receiver<Command>)->YdbResult<()>{
 
-        trace!("Starting...");
-        let mut state = self.state.lock().await;
-
-        if let TopicWriterState::Working(_) = &*state{
-            warn!("writer is already working");
-            return Ok(());
+        loop{
+            let session = WriterSession::run_session(
+                producer_id.clone(),
+                &opts,
+                connection_manager.clone()
+            ).await?;
+            
+            match Self::command_loop(session, &mut rx).await{
+                Ok(_) => {
+                    trace!("session closed");
+                    break;
+                },
+                Err(e) => {
+                    error!("session closed with error: {}", e);
+                    continue;
+                }
+            }
         }
 
-        let session = WriterSession::run_session(
-            self.producer_id.clone(),
-            &self.opts,
-            self.connection_manager.clone()
-        ).await?;
+        Ok(())
+    }
 
-        *state = TopicWriterState::Working(session);
+    async fn command_loop(mut session: WriterSession, commands_receiver: &mut mpsc::Receiver<Command>)->YdbResult<()>{
+        while let Some(command) = commands_receiver.recv().await{
+            match command{
+                Command::Write(message, ack) => {
+                    session.write_message(message, ack).await?;
+                },
+                Command::Stop => {
+                    session.stop().await?;
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 
     pub async fn stop(self) -> YdbResult<()> {
-        trace!("Stopping...");
-        let mut state = self.state.lock().await;
 
-        if let TopicWriterState::Working(session) = &mut *state{
-            *state = match session.stop().await{
-                Ok(_) => TopicWriterState::Idle,
-                Err(e) => TopicWriterState::FinishedWithError(e),
-            };
-            return Ok(());
-        }
-
-        warn!("writer is not working");
+        self.commands.send(Command::Stop).await
+            .map_err(|_| YdbError::custom("can't send stop command"))?;
         Ok(())
     }
 
     pub async fn write(&self, message: TopicWriterMessage) -> YdbResult<()> {
-        if let TopicWriterState::Working(session) = &*self.state.lock().await {
-            session.write_message(message, None).await?;
-            return Ok(());
-        }
-        Err(YdbError::custom("writer is not working"))
+        self.commands.send(Command::Write(message, None)).await
+            .map_err( |_| YdbError::custom("can't send write command"))?;
+        Ok(())
     }
 
     pub async fn write_with_ack(
         &self,
         message: TopicWriterMessage,
     ) -> YdbResult<MessageWriteStatus> {
+        let (tx, rx)= tokio::sync::oneshot::channel();
 
-        if let TopicWriterState::Working(session) = &*self.state.lock().await {
-            let (tx, rx)= tokio::sync::oneshot::channel();
-            session.write_message(message, Some(tx)).await?;
-            return Ok(rx.await?);
-        }
-        Err(YdbError::custom("writer is not working"))
+        self.commands.send(Command::Write(message, Some(tx))).await
+            .map_err( |_| YdbError::custom("can't send write command"))?;
+
+        Ok(rx.await?)
     }
 
     pub async fn write_with_ack_future(
@@ -175,12 +139,12 @@ impl TopicWriter {
         message: TopicWriterMessage,
     ) -> YdbResult<AckFuture> {
 
-        if let TopicWriterState::Working(session) = &*self.state.lock().await {
-            let (tx, rx)= tokio::sync::oneshot::channel();
-            session.write_message(message, Some(tx)).await?;
-            return Ok(AckFuture { receiver: rx });
-        }
-        Err(YdbError::custom("writer is not working"))
+        let (tx, rx)= tokio::sync::oneshot::channel();
+
+        self.commands.send(Command::Write(message, Some(tx))).await
+            .map_err( |_| YdbError::custom("can't send write command"))?;
+
+        Ok(AckFuture { receiver: rx })
     }
     
 }

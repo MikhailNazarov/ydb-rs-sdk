@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{trace, warn};
 use ydb_grpc::ydb_proto::topic::stream_write_message::{self, from_client::ClientMessage, init_request::Partitioning, write_request::{message_data, MessageData}, InitRequest, WriteRequest};
 
-use crate::{grpc_connection_manager::GrpcConnectionManager, grpc_wrapper::raw_topic_service::{client::RawTopicClient, stream_write::{init::RawInitResponse, RawServerMessage}}, TopicWriterMessage, TopicWriterOptions, YdbError, YdbResult};
+use crate::{grpc_connection_manager::GrpcConnectionManager, grpc_wrapper::{grpc_stream_wrapper::AsyncGrpcStreamWrapper, raw_topic_service::{client::RawTopicClient, stream_write::{init::RawInitResponse, RawServerMessage}}}, TopicWriterMessage, TopicWriterOptions, YdbError, YdbResult};
 
 use super::{message_write_status::{MessageWriteStatus, WriteAck}, writer::{TopicWriterState, WriterStream}, writer_reception_queue::TopicWriterReceptionQueue};
 
@@ -17,11 +17,16 @@ struct WriterPeriodicTaskParams {
     request_stream: mpsc::UnboundedSender<stream_write_message::FromClient>,
 }
 
+
+
+
+pub(crate) type WriterStream = AsyncGrpcStreamWrapper<stream_write_message::FromClient, stream_write_message::FromServer>;
+
+
 pub(crate) struct WriterSession {
     message_sender: mpsc::Sender<TopicWriterMessage>,
     last_seq_no: AtomicI64,
     cancellation_token: CancellationToken,
-    state: Arc<Mutex<TopicWriterState>>,
     write_loop: Option<JoinHandle<()>>,
     receive_loop: Option<JoinHandle<()>>,
 
@@ -62,7 +67,7 @@ impl WriterSession{
         let mut stream= raw_client.stream_write(init_request_body).await?;
         let res = RawInitResponse::try_from(stream.receive::<RawServerMessage>().await?)?;
         
-        let confirmation_reception_queue = Arc::new(Mutex::new(TopicWriterReceptionQueue::new()));
+        let reception_queue = Arc::new(Mutex::new(TopicWriterReceptionQueue::new()));
 
         let task_params = WriterPeriodicTaskParams {
             write_request_messages_chunk_size: opts.write_request_messages_chunk_size,
@@ -71,8 +76,9 @@ impl WriterSession{
             request_stream: stream.clone_sender(),
         };
 
-        let write_loop = Self::run_write_loop(message_receiver, ct.clone(), task_params, state.clone());
-        let receive_loop = Self::run_receive_loop(stream, ct.clone(), confirmation_reception_queue, state.clone());
+        
+        let write_loop = Self::run_write_loop(message_receiver, ct.clone(), task_params);
+        let receive_loop = Self::run_receive_loop(stream, ct.clone(), reception_queue.clone());
         
         Ok(WriterSession{
             message_sender,
@@ -87,6 +93,7 @@ impl WriterSession{
             write_request_messages_chunk_size: opts.write_request_messages_chunk_size,
             write_request_send_messages_period: opts.write_request_send_messages_period,
             auto_set_seq_no: opts.auto_seq_no,
+            reception_queue,
         })
     }
 
@@ -94,7 +101,6 @@ impl WriterSession{
         stream: WriterStream,
         ct: CancellationToken,
         reception_queue: Arc<Mutex<TopicWriterReceptionQueue>>,
-        state: Arc<Mutex<TopicWriterState>>,
     ) -> JoinHandle<()>{
         tokio::spawn(async move {
             let mut stream = stream; // force move inside
@@ -128,7 +134,6 @@ impl WriterSession{
         receiver: mpsc::Receiver<TopicWriterMessage>,
         ct: CancellationToken, 
         task_params: WriterPeriodicTaskParams,
-        state: Arc<Mutex<TopicWriterState>>
     )->JoinHandle<()>{
         tokio::spawn(async move {
             let mut receiver = receiver; // force move inside
@@ -238,7 +243,7 @@ impl WriterSession{
         Ok(())
     }
 
-    pub(crate) async fn stop(&mut self) -> YdbResult<()> {
+    pub(super) async fn stop(&mut self) -> YdbResult<()> {
         self.flush().await?;
         self.cancellation_token.cancel();
 
