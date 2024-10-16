@@ -1,13 +1,18 @@
+use tokio::sync::oneshot;
+
 use crate::client_topic::topicwriter::message_write_status::MessageWriteStatus;
 use crate::grpc_wrapper::raw_errors::{RawError, RawResult};
 
 use std::collections::VecDeque;
 
+/// Represents message reception type
 pub(crate) enum TopicWriterReceptionType {
-    AwaitingConfirmation(tokio::sync::oneshot::Sender<MessageWriteStatus>),
+    AwaitingConfirmation(oneshot::Sender<MessageWriteStatus>),
     NoConfirmationExpected,
 }
 
+/// Represents message reception ticket
+/// used to send confirmation if needed
 pub(crate) struct TopicWriterReceptionTicket {
     seq_no: i64,
     reception_type: TopicWriterReceptionType,
@@ -47,7 +52,7 @@ impl TopicWriterReceptionTicket {
 pub(crate) struct TopicWriterReceptionQueue {
     message_receipt_signals_queue: VecDeque<TopicWriterReceptionTicket>,
 
-    flush_finished_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    flush_finished_sender: Option<oneshot::Sender<()>>,
 }
 
 impl TopicWriterReceptionQueue {
@@ -58,11 +63,8 @@ impl TopicWriterReceptionQueue {
         }
     }
 
-    pub(crate) fn init_flush_op(&mut self) -> RawResult<tokio::sync::oneshot::Receiver<()>> {
-        let (tx, rx): (
-            tokio::sync::oneshot::Sender<()>,
-            tokio::sync::oneshot::Receiver<()>,
-        ) = tokio::sync::oneshot::channel();
+    pub(crate) fn init_flush_op(&mut self) -> RawResult<oneshot::Receiver<()>> {
+        let (tx, rx) = oneshot::channel();
         if self.message_receipt_signals_queue.is_empty() {
             tx.send(()).unwrap();
             return Ok(rx);

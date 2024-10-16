@@ -1,4 +1,4 @@
-use std::{sync::{atomic::AtomicI64, Arc}, time::{Duration, Instant, UNIX_EPOCH}};
+use std::{mem::swap, sync::{atomic::AtomicI64, Arc}, time::{Duration, Instant, UNIX_EPOCH}};
 
 use tokio::{sync::{mpsc, Mutex}, task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
@@ -7,7 +7,7 @@ use ydb_grpc::ydb_proto::topic::stream_write_message::{self, from_client::Client
 
 use crate::{grpc_connection_manager::GrpcConnectionManager, grpc_wrapper::raw_topic_service::{client::RawTopicClient, stream_write::{init::RawInitResponse, RawServerMessage}}, TopicWriterMessage, TopicWriterOptions, YdbError, YdbResult};
 
-use super::{message_write_status::WriteAck, writer::{TopicWriterState, WriterStream}, writer_reception_queue::TopicWriterReceptionQueue};
+use super::{message_write_status::{MessageWriteStatus, WriteAck}, writer::{TopicWriterState, WriterStream}, writer_reception_queue::TopicWriterReceptionQueue};
 
 
 struct WriterPeriodicTaskParams {
@@ -22,8 +22,8 @@ pub(crate) struct WriterSession {
     last_seq_no: AtomicI64,
     cancellation_token: CancellationToken,
     state: Arc<Mutex<TopicWriterState>>,
-    write_loop: JoinHandle<()>,
-    receive_loop: JoinHandle<()>,
+    write_loop: Option<JoinHandle<()>>,
+    receive_loop: Option<JoinHandle<()>>,
 
     path: String,
     producer_id: Option<String>,
@@ -32,6 +32,8 @@ pub(crate) struct WriterSession {
 
     write_request_messages_chunk_size: usize,
     write_request_send_messages_period: Duration,
+
+    reception_queue: Arc<Mutex<TopicWriterReceptionQueue>>,
 
     auto_set_seq_no: bool,
 }
@@ -57,8 +59,6 @@ impl WriterSession{
         };
         let ct = CancellationToken::new();
         let (message_sender, message_receiver) = mpsc::channel(32_usize);
-        let state = Arc::new(Mutex::new(TopicWriterState::Working));
-        
         let mut stream= raw_client.stream_write(init_request_body).await?;
         let res = RawInitResponse::try_from(stream.receive::<RawServerMessage>().await?)?;
         
@@ -80,9 +80,8 @@ impl WriterSession{
             session_id: res.session_id,
             last_seq_no: res.last_seq_no.into(),
             cancellation_token: ct,
-            write_loop,
-            receive_loop,
-            state,
+            write_loop: Some(write_loop),
+            receive_loop: Some(receive_loop),
             path: opts.topic_path.clone(),
             producer_id: Some(producer_id.clone()),
             write_request_messages_chunk_size: opts.write_request_messages_chunk_size,
@@ -194,7 +193,7 @@ impl WriterSession{
                         data: message.data,
                         uncompressed_size: data_size,
                         partitioning: Some(message_data::Partitioning::MessageGroupId(
-                            task_params.producer_id.clone().unwrap_or_default(),
+                            task_params.producer_id.clone(),
                         )),
                     });
                 }
@@ -222,6 +221,99 @@ impl WriterSession{
                 .unwrap(); // TODO: HANDLE ERROR
         }
         Ok(())
+    }
+
+    async fn wait_handle(handle: &mut Option<JoinHandle<()>>) -> YdbResult<()>{
+       
+        let mut t = None;
+        swap(handle, &mut t);
+
+        match t{
+            Some(handle) => {
+                handle.await?;
+            },
+            None => (),
+        }
+        
+        Ok(())
+    }
+
+    pub(crate) async fn stop(&mut self) -> YdbResult<()> {
+        self.flush().await?;
+        self.cancellation_token.cancel();
+
+        let write_loop_res = Self::wait_handle(&mut self.write_loop).await;
+        let receive_loop_res = Self::wait_handle(&mut self.receive_loop).await;
+
+        write_loop_res?;
+        receive_loop_res?;
+        Ok(())
+    }
+
+    pub(super) async fn write_message(
+        &self,
+        mut message: TopicWriterMessage,
+        wait_ack: Option<tokio::sync::oneshot::Sender<MessageWriteStatus>>,
+    ) -> YdbResult<()> {
+        self.is_cancelled().await?;
+
+        if self.auto_set_seq_no {
+            if message.seq_no.is_some() {
+                return Err(YdbError::custom(
+                    "force set message seqno possible only if auto_set_seq_no disabled",
+                ));
+            }
+            message.seq_no = Some(self.last_seq_num_handled + 1);
+        };
+
+        let message_seqno = if let Some(mess_seqno) = message.seq_no {
+            self.last_seq_num_handled = mess_seqno;
+            mess_seqno
+        } else {
+            return Err(YdbError::custom("need to set message seq_no"));
+        };
+
+        self.writer_message_sender
+            .send(message)
+            .await
+            .map_err(|err| {
+                YdbError::custom(format!("can't send the message to channel: {}", err))
+            })?;
+
+        let reception_type = wait_ack.map_or(
+            TopicWriterReceptionType::NoConfirmationExpected,
+            TopicWriterReceptionType::AwaitingConfirmation,
+        );
+
+        {
+            // bracket needs for release mutex as soon as possible - before await
+            let mut reception_queue = self.confirmation_reception_queue.lock().unwrap();
+            reception_queue.add_ticket(TopicWriterReceptionTicket::new(
+                message_seqno,
+                reception_type,
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn flush(&self) -> YdbResult<()> {
+        self.is_cancelled().await?;
+
+        let flush_op_completed = {
+            let mut reception_queue = self.reception_queue.lock().await;
+            reception_queue.init_flush_op()?
+        };
+
+        Ok(flush_op_completed.await?)
+    }
+
+    async fn is_cancelled(&self) -> YdbResult<()> {
+        let state = self.state.lock().await;
+        match &*state {
+            TopicWriterState::Running => Ok(()),
+            TopicWriterState::FinishedWithError(err) => Err(err.clone()),
+        }
     }
 
     async fn receive_messages_loop_iteration(

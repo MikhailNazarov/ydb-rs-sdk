@@ -1,9 +1,6 @@
 use crate::client_topic::topicwriter::message::TopicWriterMessage;
 use crate::client_topic::topicwriter::message_write_status::MessageWriteStatus;
 use crate::client_topic::topicwriter::writer_options::TopicWriterOptions;
-use crate::client_topic::topicwriter::writer_reception_queue::{
-    TopicWriterReceptionTicket, TopicWriterReceptionType,
-};
 use crate::grpc_connection_manager::GrpcConnectionManager;
 
 use crate::grpc_wrapper::grpc_stream_wrapper::AsyncGrpcStreamWrapper;
@@ -15,15 +12,16 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use tracing::log::trace;
+use tracing::warn;
 use ydb_grpc::ydb_proto::topic::stream_write_message;
 
 use super::writer_session::WriterSession;
 
 pub(crate) enum TopicWriterState {
-    Created,
+    Idle,
     Working(WriterSession),
     FinishedWithError(YdbError),
 }
@@ -59,6 +57,7 @@ pub struct TopicWriter {
     opts: TopicWriterOptions,
     connection_manager: GrpcConnectionManager,
     state: Arc<Mutex<TopicWriterState>>,
+    
 }
 
 #[allow(dead_code)]
@@ -109,141 +108,79 @@ impl TopicWriter {
             producer_id,
             opts,
             connection_manager,
-            state: Arc::new(Mutex::new(TopicWriterState::Created)), 
+            state: Arc::new(Mutex::new(TopicWriterState::Idle)), 
             //Arc::new(Mutex::new(TopicWriterState::Working(session))) 
         }
     }
 
-    pub(crate) async fn run(
-        &self
-    )->YdbResult<()>{
+    pub(crate) async fn run(&self)->YdbResult<()>{
+
+        trace!("Starting...");
+        let mut state = self.state.lock().await;
+
+        if let TopicWriterState::Working(_) = &*state{
+            warn!("writer is already working");
+            return Ok(());
+        }
+
         let session = WriterSession::run_session(
             self.producer_id.clone(),
             &self.opts,
             self.connection_manager.clone()
         ).await?;
-        *self.state.lock().await = TopicWriterState::Working(session);
+
+        *state = TopicWriterState::Working(session);
         Ok(())
     }
 
     pub async fn stop(self) -> YdbResult<()> {
         trace!("Stopping...");
+        let mut state = self.state.lock().await;
 
-        self.flush().await?;
-        self.cancellation_token.cancel();
+        if let TopicWriterState::Working(session) = &mut *state{
+            *state = match session.stop().await{
+                Ok(_) => TopicWriterState::Idle,
+                Err(e) => TopicWriterState::FinishedWithError(e),
+            };
+            return Ok(());
+        }
 
-        self.writer_loop.await.map_err(|err| {
-            YdbError::custom(format!(
-                "error while wait finish writer_loop on stop: {}",
-                err
-            ))
-        })?; // TODO: handle ERROR
-        trace!("Writer loop stopped");
-
-        self.receive_messages_loop.await.map_err(|err| {
-            YdbError::custom(format!(
-                "error while wait finish receive_messages_loop on stop: {}",
-                err
-            ))
-        })?; // TODO: handle ERROR
-        trace!("Message receive stopped");
+        warn!("writer is not working");
         Ok(())
     }
 
     pub async fn write(&self, message: TopicWriterMessage) -> YdbResult<()> {
-        self.write_message(message, None).await?;
-        Ok(())
+        if let TopicWriterState::Working(session) = &*self.state.lock().await {
+            session.write_message(message, None).await?;
+            return Ok(());
+        }
+        Err(YdbError::custom("writer is not working"))
     }
 
     pub async fn write_with_ack(
         &self,
         message: TopicWriterMessage,
     ) -> YdbResult<MessageWriteStatus> {
-        let (tx, rx): (
-            tokio::sync::oneshot::Sender<MessageWriteStatus>,
-            tokio::sync::oneshot::Receiver<MessageWriteStatus>,
-        ) = tokio::sync::oneshot::channel();
 
-        self.write_message(message, Some(tx)).await?;
-        Ok(rx.await?)
+        if let TopicWriterState::Working(session) = &*self.state.lock().await {
+            let (tx, rx)= tokio::sync::oneshot::channel();
+            session.write_message(message, Some(tx)).await?;
+            return Ok(rx.await?);
+        }
+        Err(YdbError::custom("writer is not working"))
     }
 
     pub async fn write_with_ack_future(
         &self,
-        _message: TopicWriterMessage,
+        message: TopicWriterMessage,
     ) -> YdbResult<AckFuture> {
-        let (tx, rx): (
-            tokio::sync::oneshot::Sender<MessageWriteStatus>,
-            tokio::sync::oneshot::Receiver<MessageWriteStatus>,
-        ) = tokio::sync::oneshot::channel();
 
-        self.write_message(_message, Some(tx)).await?;
-        Ok(AckFuture { receiver: rx })
-    }
-
-    async fn write_message(
-        &self,
-        mut message: TopicWriterMessage,
-        wait_ack: Option<tokio::sync::oneshot::Sender<MessageWriteStatus>>,
-    ) -> YdbResult<()> {
-        self.is_cancelled().await?;
-
-        if self.auto_set_seq_no {
-            if message.seq_no.is_some() {
-                return Err(YdbError::custom(
-                    "force set message seqno possible only if auto_set_seq_no disabled",
-                ));
-            }
-            message.seq_no = Some(self.last_seq_num_handled + 1);
-        };
-
-        let message_seqno = if let Some(mess_seqno) = message.seq_no {
-            self.last_seq_num_handled = mess_seqno;
-            mess_seqno
-        } else {
-            return Err(YdbError::custom("need to set message seq_no"));
-        };
-
-        self.writer_message_sender
-            .send(message)
-            .await
-            .map_err(|err| {
-                YdbError::custom(format!("can't send the message to channel: {}", err))
-            })?;
-
-        let reception_type = wait_ack.map_or(
-            TopicWriterReceptionType::NoConfirmationExpected,
-            TopicWriterReceptionType::AwaitingConfirmation,
-        );
-
-        {
-            // bracket needs for release mutex as soon as possible - before await
-            let mut reception_queue = self.confirmation_reception_queue.lock().unwrap();
-            reception_queue.add_ticket(TopicWriterReceptionTicket::new(
-                message_seqno,
-                reception_type,
-            ));
+        if let TopicWriterState::Working(session) = &*self.state.lock().await {
+            let (tx, rx)= tokio::sync::oneshot::channel();
+            session.write_message(message, Some(tx)).await?;
+            return Ok(AckFuture { receiver: rx });
         }
-
-        Ok(())
+        Err(YdbError::custom("writer is not working"))
     }
-
-    pub async fn flush(&self) -> YdbResult<()> {
-        self.is_cancelled().await?;
-
-        let flush_op_completed = {
-            let mut reception_queue = self.confirmation_reception_queue.lock().unwrap();
-            reception_queue.init_flush_op()?
-        };
-
-        Ok(flush_op_completed.await?)
-    }
-
-    async fn is_cancelled(&self) -> YdbResult<()> {
-        let state = self.writer_state.lock().unwrap();
-        match state.deref() {
-            TopicWriterState::Working => Ok(()),
-            TopicWriterState::FinishedWithError(err) => Err(err.clone()),
-        }
-    }
+    
 }
