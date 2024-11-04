@@ -12,6 +12,7 @@ impl From<RawExplainDataQueryRequest> for ydb_grpc::ydb_proto::table::ExplainDat
             session_id: v.session_id,
             yql_text: v.yql_text,
             operation_params: Some(v.operation_params.into()),
+            collect_full_diagnostics: false,
         }
     }
 }
