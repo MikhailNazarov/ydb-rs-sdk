@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use tracing::trace;
+
 use crate::grpc_wrapper::raw_errors::RawError;
 use crate::grpc_wrapper::raw_table_service::query_stats::RawQueryStatMode;
 use crate::grpc_wrapper::raw_table_service::transaction_control::RawTransactionControl;
-use crate::grpc_wrapper::raw_table_service::value::{RawResultSet, RawTypedValue};
 use crate::grpc_wrapper::raw_table_service::value::r#type::RawType;
+use crate::grpc_wrapper::raw_table_service::value::{RawResultSet, RawTypedValue};
 use crate::grpc_wrapper::raw_ydb_operation::RawOperationParams;
+use std::collections::HashMap;
 
 use super::client::RawQueryStats;
 
@@ -46,7 +48,7 @@ pub(crate) struct RawExecuteDataQueryResult {
     pub result_sets: Vec<RawResultSet>,
     pub tx_meta: RawTransactionMeta,
     pub query_meta: Option<RawQueryMeta>,
-    pub query_stats: Option<RawQueryStats>, 
+    pub query_stats: Option<RawQueryStats>,
 }
 
 impl TryFrom<ydb_grpc::ydb_proto::table::ExecuteQueryResult> for RawExecuteDataQueryResult {
@@ -55,13 +57,17 @@ impl TryFrom<ydb_grpc::ydb_proto::table::ExecuteQueryResult> for RawExecuteDataQ
     fn try_from(
         value: ydb_grpc::ydb_proto::table::ExecuteQueryResult,
     ) -> Result<Self, Self::Error> {
+        trace!(
+            "response: {}",
+            serde_json::to_string(&value).unwrap_or("bad json".to_string())
+        );
         let result_sets_res: Result<_, RawError> = value
             .result_sets
             .into_iter()
             .map(|item| item.try_into())
             .collect();
 
-        let query_meta = if let Some(proto_meta) = value.query_meta{
+        let query_meta = if let Some(proto_meta) = value.query_meta {
             Some(RawQueryMeta::try_from(proto_meta)?)
         } else {
             None
