@@ -37,7 +37,8 @@ impl QueryResult {
     ) -> YdbResult<Self> {
         trace!(
             "raw_res: {}",
-            ensure_len_string(serde_json::to_string(&raw_res)?)
+            //ensure_len_string(serde_json::to_string(&raw_res)?)
+            serde_json::to_string(&raw_res)?
         );
         let mut results = Vec::with_capacity(raw_res.result_sets.len());
         for current_set in raw_res.result_sets.into_iter() {
