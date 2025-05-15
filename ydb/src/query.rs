@@ -24,8 +24,6 @@ pub enum QueryStatsMode {
     Profile,
 }
 
-
-
 impl Query {
     /// Create query with query text
     pub fn new<T: Into<String>>(query: T) -> Self {
@@ -89,7 +87,7 @@ impl Query {
     /// .with_params(ydb_params!("$val" => 123 as i64))
     /// .with_keep_in_cache(false);
     /// ```
-    pub fn with_keep_in_cache(mut self, val: bool)->Self {
+    pub fn with_keep_in_cache(mut self, val: bool) -> Self {
         self.force_keep_in_cache = true;
         self.keep_in_cache = val;
         self
@@ -99,7 +97,6 @@ impl Query {
         self.collect_stats = mode;
         self
     }
-
 
     pub(crate) fn query_to_proto(&self) -> ydb_grpc::ydb_proto::table::Query {
         ydb_grpc::ydb_proto::table::Query {

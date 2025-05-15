@@ -57,7 +57,7 @@ impl QueryResult {
         Ok(QueryResult {
             results,
             tx_id: raw_res.tx_meta.id,
-            stats: raw_res.query_stats.map(|x|x.into()),
+            stats: raw_res.query_stats.map(|x| x.into()),
         })
     }
 
@@ -65,7 +65,7 @@ impl QueryResult {
         self.results
     }
 
-    pub fn stats(&self)-> Option<&QueryStats> {
+    pub fn stats(&self) -> Option<&QueryStats> {
         self.stats.as_ref()
     }
 
@@ -106,24 +106,30 @@ pub struct QueryStats {
     pub affected_rows: u64,
 }
 
-impl RawTableAccessStats{
+impl RawTableAccessStats {
     fn affected_rows(&self) -> u64 {
-        self.reads.as_ref().map(|x|x.rows).unwrap_or(0) 
-        + self.updates.as_ref().map(|x|x.rows).unwrap_or(0) 
-        + self.deletes.as_ref().map(|x|x.rows).unwrap_or(0)
+        self.reads.as_ref().map(|x| x.rows).unwrap_or(0)
+            + self.updates.as_ref().map(|x| x.rows).unwrap_or(0)
+            + self.deletes.as_ref().map(|x| x.rows).unwrap_or(0)
     }
 }
 
-impl From<RawQueryStats> for QueryStats{
+impl From<RawQueryStats> for QueryStats {
     fn from(value: RawQueryStats) -> Self {
         Self {
             process_cpu_time: value.process_cpu_time,
             total_duration: value.total_duration,
             total_cpu_time: value.total_cpu_time,
-            affected_rows: value.query_phases.iter()
-                .map(|x| 
-                    x.table_access.iter().map(|x| x.affected_rows()).sum::<u64>()
-                ).sum(),
+            affected_rows: value
+                .query_phases
+                .iter()
+                .map(|x| {
+                    x.table_access
+                        .iter()
+                        .map(|x| x.affected_rows())
+                        .sum::<u64>()
+                })
+                .sum(),
         }
     }
 }
@@ -136,7 +142,6 @@ pub struct ResultSet {
 }
 
 impl ResultSet {
-
     pub fn columns(&self) -> Vec<Column> {
         make_columns(&self.columns)
     }
@@ -221,7 +226,7 @@ impl Row {
     pub fn columns(&self) -> Vec<Column> {
         make_columns(&self.columns)
     }
-    
+
     pub fn remove_field_by_name(&mut self, name: &str) -> errors::YdbResult<Value> {
         if let Some(&index) = self.columns_by_name.get(name) {
             return self.remove_field(index);
@@ -295,50 +300,45 @@ impl StreamResult {
 }
 
 #[derive(Debug)]
-pub struct PrepareQueryResult{
+pub struct PrepareQueryResult {
     pub query_id: String,
-    pub parameters_types: Vec<PrepareQueryParameter>, 
+    pub parameters_types: Vec<PrepareQueryParameter>,
 }
 
 #[derive(Debug)]
-pub struct PrepareQueryParameter{
+pub struct PrepareQueryParameter {
     pub name: String,
-    pub value_type: Option<Value>
+    pub value_type: Option<Value>,
 }
 
 impl PrepareQueryResult {
-    pub(crate) fn from_raw_result(
-        raw_res: RawPrepareDataQueryResult,
-    ) -> YdbResult<Self> {
-
-        Ok(
-            Self {
-                 query_id: raw_res.query_id, 
-                 parameters_types: raw_res.parameters_types.into_iter().map(|v| 
-                    PrepareQueryParameter {
-                         name: v.name, 
-                         value_type:v.r#type.clone().into_value_example().ok() 
-                    }).collect()
-                }
-        )
+    pub(crate) fn from_raw_result(raw_res: RawPrepareDataQueryResult) -> YdbResult<Self> {
+        Ok(Self {
+            query_id: raw_res.query_id,
+            parameters_types: raw_res
+                .parameters_types
+                .into_iter()
+                .map(|v| PrepareQueryParameter {
+                    name: v.name,
+                    value_type: v.r#type.clone().into_value_example().ok(),
+                })
+                .collect(),
+        })
     }
 }
 
 #[derive(Debug)]
-pub struct ExplainQueryResult{
+pub struct ExplainQueryResult {
     pub plan: String,
     pub ast: String,
 }
 
-impl ExplainQueryResult{
-    pub(crate) fn from_raw_result(
-        raw_res: RawExplainDataQueryResult,
-    ) -> YdbResult<Self> {
-
+impl ExplainQueryResult {
+    pub(crate) fn from_raw_result(raw_res: RawExplainDataQueryResult) -> YdbResult<Self> {
         //todo: parse result
         Ok(Self {
             plan: raw_res.query_plan,
             ast: raw_res.query_ast,
-         })
+        })
     }
 }

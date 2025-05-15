@@ -5,7 +5,7 @@ use crate::grpc_wrapper::raw_table_service::query_stats::RawQueryStatMode;
 use crate::grpc_wrapper::raw_table_service::transaction_control::{
     RawOnlineReadonlySettings, RawTransactionControl, RawTxMode, RawTxSelector, RawTxSettings,
 };
-use crate::query::{Query,QueryStatsMode};
+use crate::query::{Query, QueryStatsMode};
 use crate::result::QueryResult;
 use crate::session::Session;
 use crate::session_pool::SessionPool;

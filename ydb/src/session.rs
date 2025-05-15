@@ -5,9 +5,9 @@ use crate::grpc_wrapper::raw_table_service::explain_data_query::RawExplainDataQu
 use crate::grpc_wrapper::raw_table_service::prepare_data_query::RawPrepareDataQueryRequest;
 use crate::query::Query;
 use crate::result::{ExplainQueryResult, PrepareQueryResult, QueryResult, StreamResult};
-use std::sync::atomic::{AtomicI64, Ordering};
 use derivative::Derivative;
 use itertools::Itertools;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::grpc_connection_manager::GrpcConnectionManager;
 use crate::grpc_wrapper::raw_table_service::client::{
@@ -17,21 +17,18 @@ use crate::grpc_wrapper::runtime_interceptors::InterceptedChannel;
 
 use crate::grpc_wrapper::raw_errors::RawResult;
 use crate::grpc_wrapper::raw_table_service::commit_transaction::RawCommitTransactionRequest;
+use crate::grpc_wrapper::raw_table_service::copy_table::{
+    RawCopyTableRequest, RawCopyTablesRequest,
+};
+use crate::grpc_wrapper::raw_table_service::execute_data_query::RawExecuteDataQueryRequest;
 use crate::grpc_wrapper::raw_table_service::execute_scheme_query::RawExecuteSchemeQueryRequest;
 use crate::grpc_wrapper::raw_table_service::keepalive::RawKeepAliveRequest;
 use crate::grpc_wrapper::raw_table_service::rollback_transaction::RawRollbackTransactionRequest;
+use crate::table_service_types::CopyTableItem;
 use crate::trace_helpers::ensure_len_string;
 use tracing::{debug, trace};
 use ydb_grpc::ydb_proto::table::v1::table_service_client::TableServiceClient;
-use ydb_grpc::ydb_proto::table::{
-    execute_scan_query_request, ExecuteScanQueryRequest,
-};
-use crate::grpc_wrapper::raw_table_service::execute_data_query::RawExecuteDataQueryRequest;
-use crate::grpc_wrapper::raw_table_service::copy_table::{
-    RawCopyTableRequest,
-    RawCopyTablesRequest
-};
-use crate::table_service_types::CopyTableItem;
+use ydb_grpc::ydb_proto::table::{execute_scan_query_request, ExecuteScanQueryRequest};
 
 static REQUEST_NUMBER: AtomicI64 = AtomicI64::new(0);
 static DEFAULT_COLLECT_STAT_MODE: CollectStatsMode = CollectStatsMode::None;
@@ -141,9 +138,9 @@ impl Session {
             ensure_len_string(serde_json::to_string(&res)?)
         );
         if error_on_truncated {
-            return Err(YdbError::from_str("result of query was truncated"))
+            return Err(YdbError::from_str("result of query was truncated"));
         }
-        QueryResult::from_raw_result( error_on_truncated, res)
+        QueryResult::from_raw_result(error_on_truncated, res)
     }
 
     #[tracing::instrument(skip(self, query), fields(req_number=req_number()))]
@@ -154,7 +151,10 @@ impl Session {
             mode: execute_scan_query_request::Mode::Exec as i32,
             ..ExecuteScanQueryRequest::default()
         };
-        debug!("request: {}", crate::trace_helpers::ensure_len_string(serde_json::to_string(&req)?));
+        debug!(
+            "request: {}",
+            crate::trace_helpers::ensure_len_string(serde_json::to_string(&req)?)
+        );
         let mut channel = self.get_channel().await?;
         let resp = channel.stream_execute_scan_query(req).await?;
         let stream = resp.into_inner();
@@ -192,10 +192,7 @@ impl Session {
         self.handle_raw_result(res)
     }
 
-    pub async fn copy_tables(
-        &mut self,
-        tables: Vec<CopyTableItem>,
-    ) -> YdbResult<()> {
+    pub async fn copy_tables(&mut self, tables: Vec<CopyTableItem>) -> YdbResult<()> {
         let mut table = self.get_table_client().await?;
         let res = table
             .copy_tables(RawCopyTablesRequest {
@@ -228,7 +225,10 @@ impl Session {
         }
     }
 
-    pub(crate) async fn prepare_data_query(&mut self, query: String) -> YdbResult<PrepareQueryResult> {
+    pub(crate) async fn prepare_data_query(
+        &mut self,
+        query: String,
+    ) -> YdbResult<PrepareQueryResult> {
         let mut table = self.get_table_client().await?;
         let res = table
             .prepare_data_query(RawPrepareDataQueryRequest {
@@ -238,16 +238,21 @@ impl Session {
             })
             .await;
         let raw_res = self.handle_raw_result(res)?;
-        PrepareQueryResult::from_raw_result( raw_res)
+        PrepareQueryResult::from_raw_result(raw_res)
     }
 
-    pub(crate) async fn explain_data_query(&mut self, query: String) -> YdbResult<ExplainQueryResult> {
+    pub(crate) async fn explain_data_query(
+        &mut self,
+        query: String,
+    ) -> YdbResult<ExplainQueryResult> {
         let mut table = self.get_table_client().await?;
-        let res = table.explain_data_query(RawExplainDataQueryRequest {            
-            operation_params: self.timeouts.operation_params(),
-            yql_text: query,
-            session_id: self.id.clone(),
-        }).await;
+        let res = table
+            .explain_data_query(RawExplainDataQueryRequest {
+                operation_params: self.timeouts.operation_params(),
+                yql_text: query,
+                session_id: self.id.clone(),
+            })
+            .await;
         let raw_res = self.handle_raw_result(res)?;
         ExplainQueryResult::from_raw_result(raw_res)
     }

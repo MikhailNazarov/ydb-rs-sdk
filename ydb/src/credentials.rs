@@ -43,8 +43,7 @@ pub type YandexMetadata = MetadataUrlCredentials;
 
 pub type CredentialsRef = Arc<Box<dyn Credentials>>;
 
-impl Credentials for CredentialsRef{
-
+impl Credentials for CredentialsRef {
     fn create_token(&self) -> YdbResult<TokenInfo> {
         self.deref().create_token()
     }
@@ -76,8 +75,6 @@ impl MetadataUrlCredentials {
             inner: GCEMetadata::from_url(YC_METADATA_URL).unwrap(),
         }
     }
-
-
 
     /// Create GCEMetadata with custom url (may need for debug or spec infrastructure with non standard metadata)
     ///
@@ -584,9 +581,7 @@ impl StaticCredentials {
         Ok(raw_response.token)
     }
 
-    pub fn new(username: String,
-        password: String,
-        endpoint: Uri, database: String) -> Self {
+    pub fn new(username: String, password: String, endpoint: Uri, database: String) -> Self {
         Self {
             username,
             password: SecretString::new(password),
@@ -596,9 +591,13 @@ impl StaticCredentials {
         }
     }
 
-    pub fn new_with_ca(username: String,
+    pub fn new_with_ca(
+        username: String,
         password: String,
-        endpoint: Uri, database: String, cert_path: String) -> Self {
+        endpoint: Uri,
+        database: String,
+        cert_path: String,
+    ) -> Self {
         Self {
             username,
             password: SecretString::new(password),

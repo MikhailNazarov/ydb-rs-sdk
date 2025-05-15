@@ -4,8 +4,14 @@ use crate::grpc_wrapper::raw_services::{GrpcServiceForDiscovery, Service};
 use crate::grpc_wrapper::raw_table_service::commit_transaction::{
     RawCommitTransactionRequest, RawCommitTransactionResult,
 };
+use crate::grpc_wrapper::raw_table_service::copy_table::{
+    RawCopyTableRequest, RawCopyTablesRequest,
+};
 use crate::grpc_wrapper::raw_table_service::create_session::{
     RawCreateSessionRequest, RawCreateSessionResult,
+};
+use crate::grpc_wrapper::raw_table_service::execute_data_query::{
+    RawExecuteDataQueryRequest, RawExecuteDataQueryResult,
 };
 use crate::grpc_wrapper::raw_table_service::execute_scheme_query::RawExecuteSchemeQueryRequest;
 use crate::grpc_wrapper::raw_table_service::keepalive::{RawKeepAliveRequest, RawKeepAliveResult};
@@ -14,8 +20,6 @@ use crate::grpc_wrapper::runtime_interceptors::InterceptedChannel;
 use serde::Serialize;
 use tracing::trace;
 use ydb_grpc::ydb_proto::table::v1::table_service_client::TableServiceClient;
-use crate::grpc_wrapper::raw_table_service::copy_table::{RawCopyTableRequest, RawCopyTablesRequest};
-use crate::grpc_wrapper::raw_table_service::execute_data_query::{RawExecuteDataQueryRequest, RawExecuteDataQueryResult};
 
 use super::explain_data_query::{RawExplainDataQueryRequest, RawExplainDataQueryResult};
 use super::prepare_data_query::{RawPrepareDataQueryRequest, RawPrepareDataQueryResult};
@@ -61,7 +65,10 @@ impl RawTableClient {
         );
     }
 
-    pub async fn execute_data_query(&mut self, req: RawExecuteDataQueryRequest)->RawResult<RawExecuteDataQueryResult>{
+    pub async fn execute_data_query(
+        &mut self,
+        req: RawExecuteDataQueryRequest,
+    ) -> RawResult<RawExecuteDataQueryResult> {
         request_with_result!(
             self.service.execute_data_query,
             req => ydb_grpc::ydb_proto::table::ExecuteDataQueryRequest,
@@ -81,22 +88,24 @@ impl RawTableClient {
 
     pub async fn explain_data_query(
         &mut self,
-        req: RawExplainDataQueryRequest) -> RawResult<RawExplainDataQueryResult> {
-            request_with_result!(
-                self.service.explain_data_query,
-                req => ydb_grpc::ydb_proto::table::ExplainDataQueryRequest,
-                ydb_grpc::ydb_proto::table::ExplainQueryResult => RawExplainDataQueryResult
-            );
+        req: RawExplainDataQueryRequest,
+    ) -> RawResult<RawExplainDataQueryResult> {
+        request_with_result!(
+            self.service.explain_data_query,
+            req => ydb_grpc::ydb_proto::table::ExplainDataQueryRequest,
+            ydb_grpc::ydb_proto::table::ExplainQueryResult => RawExplainDataQueryResult
+        );
     }
 
     pub async fn prepare_data_query(
         &mut self,
-        req: RawPrepareDataQueryRequest) -> RawResult<RawPrepareDataQueryResult> {
-            request_with_result!(
-                self.service.prepare_data_query,
-                req => ydb_grpc::ydb_proto::table::PrepareDataQueryRequest,
-                ydb_grpc::ydb_proto::table::PrepareQueryResult => RawPrepareDataQueryResult
-            );
+        req: RawPrepareDataQueryRequest,
+    ) -> RawResult<RawPrepareDataQueryResult> {
+        request_with_result!(
+            self.service.prepare_data_query,
+            req => ydb_grpc::ydb_proto::table::PrepareDataQueryRequest,
+            ydb_grpc::ydb_proto::table::PrepareQueryResult => RawPrepareDataQueryResult
+        );
     }
 
     pub async fn keep_alive(&mut self, req: RawKeepAliveRequest) -> RawResult<RawKeepAliveResult> {
@@ -117,20 +126,14 @@ impl RawTableClient {
         );
     }
 
-    pub async fn copy_table(
-        &mut self,
-        req: RawCopyTableRequest,
-    ) -> RawResult<()> {
+    pub async fn copy_table(&mut self, req: RawCopyTableRequest) -> RawResult<()> {
         request_without_result!(
             self.service.copy_table,
             req => ydb_grpc::ydb_proto::table::CopyTableRequest
         );
     }
 
-    pub async fn copy_tables(
-        &mut self,
-        req: RawCopyTablesRequest,
-    ) -> RawResult<()> {
+    pub async fn copy_tables(&mut self, req: RawCopyTablesRequest) -> RawResult<()> {
         request_without_result!(
             self.service.copy_tables,
             req => ydb_grpc::ydb_proto::table::CopyTablesRequest
@@ -171,7 +174,7 @@ pub(crate) enum CollectStatsMode {
     None,
     Basic,
     Full,
-    Profile
+    Profile,
 }
 
 impl From<CollectStatsMode> for ydb_grpc::ydb_proto::table::query_stats_collection::Mode {
@@ -195,8 +198,7 @@ impl From<CollectStatsMode> for i32 {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct RawQueryPhaseStats{
-
+pub(crate) struct RawQueryPhaseStats {
     pub duration: std::time::Duration,
 
     pub table_access: Vec<RawTableAccessStats>,
@@ -209,8 +211,7 @@ pub(crate) struct RawQueryPhaseStats{
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct RawTableAccessStats{
-
+pub(crate) struct RawTableAccessStats {
     pub name: String,
     pub reads: Option<RawOperationStats>,
     pub updates: Option<RawOperationStats>,
