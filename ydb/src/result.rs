@@ -299,13 +299,13 @@ impl StreamResult {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PrepareQueryResult {
     pub query_id: String,
     pub parameters_types: Vec<PrepareQueryParameter>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PrepareQueryParameter {
     pub name: String,
     pub value_type: Option<Value>,
