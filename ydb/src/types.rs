@@ -1,5 +1,6 @@
 use crate::errors::{YdbError, YdbResult};
 use std::collections::HashMap;
+use std::ops::Deref;
 
 use crate::grpc_wrapper::raw_table_service::value::r#type::RawType;
 use crate::grpc_wrapper::raw_table_service::value::RawColumn;
@@ -624,6 +625,14 @@ impl TryFrom<RawColumn> for Column {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Bytes {
     vec: Vec<u8>,
+}
+
+impl Deref for Bytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.vec
+    }
 }
 
 impl From<Vec<u8>> for Bytes {

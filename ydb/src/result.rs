@@ -161,8 +161,14 @@ impl Row {
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
+    /// Returns the number of fields in the row.
+    pub fn len(&self) -> usize {
         self.columns.len()
+    }
+
+    /// Returns a vector of column names.
+    pub fn get_columns_names(&self) -> Vec<String> {
+        self.columns_by_name.keys().cloned().collect()
     }
 }
 

@@ -190,12 +190,13 @@ impl<'de> Deserializer<'de> for RowDeserializer {
         // Otherwise get the value
         let value = self.get_single_value()?;
 
-        // If the value is Optional and it's None, return None
-        // Otherwise - Some(value)
-        match value {
-            Value::Optional(None) => visitor.visit_none(),
-            Value::Optional(Some(v)) => visitor.visit_some(ValueDeserializer { value: *v }),
-            _ => visitor.visit_some(ValueDeserializer { value }),
+        if let Value::Optional(v) = value {
+            match v.value {
+                Some(value) => visitor.visit_some(ValueDeserializer { value }),
+                None => visitor.visit_none(),
+            }
+        } else {
+            Err(YdbError::Convert("Expected Optional".to_string()))
         }
     }
 
@@ -253,11 +254,11 @@ impl<'de> Deserializer<'de> for RowDeserializer {
         let value = self.get_single_value()?;
 
         if let Value::List(items) = value {
-            if items.len() != len {
+            let items_len = items.values.len();
+            if items_len != len {
                 return Err(YdbError::Convert(format!(
                     "Expected tuple of length {}, got list of length {}",
-                    len,
-                    items.len()
+                    len, items_len
                 )));
             }
 
@@ -283,7 +284,10 @@ impl<'de> Deserializer<'de> for RowDeserializer {
                 }
             }
 
-            visitor.visit_seq(TupleAccess { items, index: 0 })
+            visitor.visit_seq(TupleAccess {
+                items: items.values,
+                index: 0,
+            })
         } else {
             Err(YdbError::Convert("Expected List value for tuple".into()))
         }
@@ -325,8 +329,8 @@ impl<'de> Deserializer<'de> for RowDeserializer {
 
     fn deserialize_enum<V>(
         mut self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
+        name: &'static str,
+        variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -336,7 +340,7 @@ impl<'de> Deserializer<'de> for RowDeserializer {
         let value = self.get_single_value()?;
 
         // Delegate deserialization to ValueDeserializer
-        ValueDeserializer { value }.deserialize_enum(_name, _variants, visitor)
+        ValueDeserializer { value }.deserialize_enum(name, variants, visitor)
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -391,21 +395,7 @@ struct RowMapAccess {
 
 impl RowMapAccess {
     fn new(row: Row, fields: &'static [&'static str]) -> Self {
-        let all_columns = if fields.is_empty() {
-            // If fields is empty, use all columns from Row
-            let count = row.len();
-            let mut columns = Vec::with_capacity(count);
-
-            for i in 0..count {
-                if let Ok(name) = row.column_name(i) {
-                    columns.push(name.to_string());
-                }
-            }
-
-            columns
-        } else {
-            Vec::new()
-        };
+        let all_columns = row.get_columns_names();
 
         RowMapAccess {
             row,
@@ -507,7 +497,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
             Value::Float(f) => visitor.visit_f32(f),
             Value::Double(d) => visitor.visit_f64(d),
             Value::Text(s) => visitor.visit_string(s),
-            Value::Bytes(b) => visitor.visit_byte_buf(b),
+            Value::Bytes(b) => visitor.visit_byte_buf(Vec::from(b)),
             _ => Err(crate::YdbError::Convert(format!(
                 "Unsupported Value type: {:?}",
                 self.value
@@ -661,8 +651,8 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
     where
         V: serde::de::Visitor<'de>,
     {
-        if let Value::Bytes(b) = &self.value {
-            visitor.visit_bytes(b)
+        if let Value::Bytes(b) = self.value {
+            visitor.visit_bytes(&b)
         } else {
             Err(crate::YdbError::Convert("Expected Bytes".into()))
         }
@@ -673,7 +663,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         V: serde::de::Visitor<'de>,
     {
         if let Value::Bytes(b) = self.value {
-            visitor.visit_byte_buf(b)
+            visitor.visit_byte_buf(Vec::from(b))
         } else {
             Err(crate::YdbError::Convert("Expected Bytes".into()))
         }
@@ -683,10 +673,13 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
     where
         V: serde::de::Visitor<'de>,
     {
-        match self.value {
-            Value::Optional(None) => visitor.visit_none(),
-            Value::Optional(Some(v)) => visitor.visit_some(ValueDeserializer { value: *v }),
-            _ => visitor.visit_some(ValueDeserializer { value: self.value }),
+        if let Value::Optional(v) = self.value {
+            match v.value {
+                Some(value) => visitor.visit_some(ValueDeserializer { value }),
+                None => visitor.visit_none(),
+            }
+        } else {
+            Err(YdbError::Convert("Expected Optional".to_string()))
         }
     }
 
@@ -753,7 +746,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
                     }
                 }
 
-                visitor.visit_seq(ListAccess { items, index: 0 })
+                visitor.visit_seq(ListAccess {
+                    items: &items.values,
+                    index: 0,
+                })
             }
             _ => Err(YdbError::Convert("Expected List value".into())),
         }
@@ -765,11 +761,11 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
     {
         match &self.value {
             Value::List(items) => {
-                if items.len() != len {
+                let items_len = items.values.len();
+                if items_len != len {
                     return Err(YdbError::Convert(format!(
                         "Expected tuple of length {}, got list of length {}",
-                        len,
-                        items.len()
+                        len, items_len
                     )));
                 }
 
@@ -799,7 +795,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
                 }
 
                 visitor.visit_seq(TupleAccess {
-                    items: items.clone(),
+                    items: items.values.clone(),
                     index: 0,
                 })
             }
@@ -820,7 +816,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         self.deserialize_tuple(len, visitor)
     }
 
-    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_map<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
@@ -834,7 +830,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         self,
         _name: &'static str,
         _fields: &'static [&'static str],
-        visitor: V,
+        _visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
