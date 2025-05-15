@@ -72,6 +72,8 @@ mod session;
 mod session_pool;
 mod sugar;
 
+mod serde; //todo: add feature 'serde'
+
 #[cfg(test)]
 pub(crate) mod auth_test;
 

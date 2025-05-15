@@ -160,6 +160,10 @@ impl Row {
             None => Err(YdbError::Custom("it has no the field".into())),
         }
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.columns.len()
+    }
 }
 
 pub struct ResultSetRowsIter {
