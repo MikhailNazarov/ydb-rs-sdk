@@ -4,26 +4,35 @@
 [![YDB tests](https://github.com/ydb-platform/ydb-rs-sdk/actions/workflows/rust-tests.yml/badge.svg?branch=master&event=schedule)](https://github.com/ydb-platform/ydb-rs-sdk/actions/workflows/rust-tests.yml)
 
 Rust SDK for YDB.
-Supported rust: 1.60.0 and newer.
 
-Integration tests, with dependency from real YDB database marked as ignored.
-To run it:
-1. Set YDB_CONNECTION_STRING env
-2. run cargo test -- --include-ignored
+### Prerequisites
+Rust 1.68.0 or newer
 
-# Example
+### Installation
+Add the YDB dependency to your project using `cargo add ydb` or add this your Cargo.toml:
+```toml
+[dependencies]
+ydb = "0.9.5"
+```
+
+### Example
+Create a new Rust file (e.g., main.rs) and add the following code:
+
 ```rust
-use ydb::{ClientBuilder, Query, StaticToken, YdbResult};
+use ydb::{ClientBuilder, Query, AccessTokenCredentials, YdbResult};
 
 #[tokio::main]
 async fn main() -> YdbResult<()> {
 
  // create the driver
- let client = ClientBuilder::from_str("grpc://localhost:2136?database=local")?
-    .with_credentials(StaticToken::from("asd"))
+ let client = ClientBuilder::new_from_connection_string("grpc://localhost:2136?database=local")?
+    .with_credentials(AccessTokenCredentials::from("asd"))
     .client()?;
 
  // wait until the background initialization of the driver finishes
+ // In this example, it will never be resolved because YDB methods have
+ // infinite retries by default. You can manage it using a standard
+ // Tokio timeout.
  client.wait().await?;
 
  // read the query result
@@ -49,10 +58,14 @@ async fn main() -> YdbResult<()> {
 }
 ```
 
-# More examples
-[Url shorneter application](https://github.com/ydb-platform/ydb-rs-sdk/tree/master/ydb-example-urlshortener)
+For more examples, check out the [URL shortener application](https://github.com/ydb-platform/ydb-rs-sdk/tree/master/ydb-example-urlshortener) or [many small examples](https://github.com/ydb-platform/ydb-rs-sdk/tree/master/ydb/examples).
 
-[Many small examples](https://github.com/ydb-platform/ydb-rs-sdk/tree/master/ydb/examples)
+## Tests
+
+Integration tests, with dependency from real YDB database marked as ignored.
+To run it:
+1. Set YDB_CONNECTION_STRING env
+2. run cargo test -- --include-ignored
 
 # Version policy
 

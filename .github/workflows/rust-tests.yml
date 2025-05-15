@@ -11,8 +11,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  RUST_VERSION_OLD: "1.60.0"
-  RUST_VERSION_NEW: "1.81.0"
+  RUST_VERSION_OLD: "1.68.0"
+  RUST_VERSION_NEW: "1.86.0"
 
 jobs:
   tests:
@@ -32,16 +32,19 @@ jobs:
           - /tmp/ydb_certs:/ydb_certs
         env:
           YDB_USE_IN_MEMORY_PDISKS: true
-        options: '-h localhost'
+        options: '-h localhost --name ydb'
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
 
     steps:
+    - name: Show YDB server version
+      run: docker ps; docker exec ydb /ydbd -V
+
     - name: Install rust
       uses: dtolnay/rust-toolchain@v1
       with:
         toolchain: ${{ env[matrix.rust_version] }}
-        components: clippy
+        components: clippy, rustfmt
 
     - name: Checkout
       uses: actions/checkout@v4
@@ -58,6 +61,10 @@ jobs:
 
     - name: Rust cache
       uses: Swatinem/rust-cache@v2
+
+    - name: Rustfmt check
+      if: matrix.rust_version == 'RUST_VERSION_NEW'
+      run: cargo fmt --check
 
     - name: Run tests
       env:

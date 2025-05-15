@@ -10,11 +10,12 @@ use ydb_grpc::ydb_proto::scheme::{
 };
 use ydb_grpc::ydb_proto::table::{
     CommitTransactionResponse, CopyTableResponse, CopyTablesResponse, CreateSessionResponse,
-    DeleteSessionResponse, ExecuteDataQueryResponse, ExecuteSchemeQueryResponse,
-    ExplainDataQueryResponse, KeepAliveResponse, PrepareDataQueryResponse,
-    RollbackTransactionResponse,
+    DeleteSessionResponse, ExecuteDataQueryResponse, ExecuteSchemeQueryResponse, KeepAliveResponse,
+    RollbackTransactionResponse,ExplainDataQueryResponse,PrepareDataQueryResponse
 };
-use ydb_grpc::ydb_proto::topic::{CreateTopicResponse, DropTopicResponse};
+use ydb_grpc::ydb_proto::topic::{
+    AlterTopicResponse, CreateTopicResponse, DescribeTopicResponse, DropTopicResponse,
+};
 
 pub(crate) trait Operation: Debug {
     fn operation(&self) -> Option<YdbOperation>;
@@ -42,7 +43,9 @@ operation_impl_for!(WhoAmIResponse);
 operation_impl_for!(MakeDirectoryResponse);
 operation_impl_for!(ListDirectoryResponse);
 operation_impl_for!(RemoveDirectoryResponse);
+operation_impl_for!(AlterTopicResponse);
 operation_impl_for!(CreateTopicResponse);
+operation_impl_for!(DescribeTopicResponse);
 operation_impl_for!(DropTopicResponse);
 operation_impl_for!(CreateNodeResponse);
 operation_impl_for!(DescribeNodeResponse);
