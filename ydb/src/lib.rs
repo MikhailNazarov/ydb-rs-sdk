@@ -143,6 +143,8 @@ pub use client_scheme::list_types::{SchemeEntry, SchemeEntryType, SchemePermissi
 pub use query::QueryStatsMode;
 // full enum pub types
 pub use result::{Column, QueryResult, ResultSet, ResultSetRowsIter, Row, StreamResult};
+// prepared statements
+pub use result::{PrepareQueryParameter, PrepareQueryResult};
 // full enum pub types
 pub use discovery::{Discovery, DiscoveryState, StaticDiscovery};
 // full enum pub types
