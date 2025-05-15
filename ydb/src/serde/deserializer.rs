@@ -418,7 +418,7 @@ impl<'de> MapAccess<'de> for RowMapAccess {
             if self.index < self.fields.len() {
                 let key = self.fields[self.index];
                 self.index += 1;
-                seed.deserialize(de::value::StrDeserializer::new(key))
+                seed.deserialize(de::value::StrDeserializer::<YdbError>::new(key))
                     .map(Some)
             } else {
                 Ok(None)
@@ -428,7 +428,7 @@ impl<'de> MapAccess<'de> for RowMapAccess {
             if self.index < self.all_columns.len() {
                 let key = &self.all_columns[self.index];
                 self.index += 1;
-                seed.deserialize(de::value::StrDeserializer::new(key.as_str()))
+                seed.deserialize(de::value::StrDeserializer::<YdbError>::new(key.as_str()))
                     .map(Some)
             } else {
                 Ok(None)
@@ -870,7 +870,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
                         V: de::DeserializeSeed<'de>,
                     {
                         let variant = self.variant;
-                        let val = seed.deserialize(de::value::StrDeserializer::new(variant))?;
+                        let val = seed.deserialize(de::value::StrDeserializer::<YdbError>::new(variant))?;
                         Ok((val, UnitVariantAccess))
                     }
                 }
@@ -916,14 +916,20 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
 
                 visitor.visit_enum(EnumStringAccess { variant: s })
             }
-            Value::Int8(i) | Value::Int16(i) | Value::Int32(i) | Value::Int64(i) => {
+            v @ (Value::Int8(_) | Value::Int16(_) | Value::Int32(_) | Value::Int64(_) |
+                 Value::Uint8(_) | Value::Uint16(_) | Value::Uint32(_) | Value::Uint64(_)) => {
                 // Integer representation of enum
-                let variant_index = *i as u32;
-                visitor.visit_u32(variant_index)
-            }
-            Value::Uint8(i) | Value::Uint16(i) | Value::Uint32(i) | Value::Uint64(i) => {
-                // Unsigned integer representation of enum
-                let variant_index = *i as u32;
+                let variant_index = match v {
+                    Value::Int8(i) => *i as u32,
+                    Value::Int16(i) => *i as u32,
+                    Value::Int32(i) => *i as u32,
+                    Value::Int64(i) => *i as u32,
+                    Value::Uint8(i) => *i as u32,
+                    Value::Uint16(i) => *i as u32,
+                    Value::Uint32(i) => *i as u32,
+                    Value::Uint64(i) => *i as u32,
+                    _ => unreachable!(), // Этот случай невозможен из-за предыдущего сопоставления
+                };
                 visitor.visit_u32(variant_index)
             }
             _ => Err(YdbError::Convert(
