@@ -6,4 +6,5 @@ Cargo.toml.bak
 key.json
 .env
 .vscode/
+.zed/
 .vscode/tasks.json
