@@ -2,7 +2,7 @@ name: YDB tests
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, experimental ]
   pull_request:
     branches: [ master ]
   schedule:
