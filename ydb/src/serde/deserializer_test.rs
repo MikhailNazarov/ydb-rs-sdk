@@ -1,4 +1,5 @@
 use serde::{de::DeserializeOwned, Deserialize};
+use serde_repr::Deserialize_repr;
 
 use crate::{
     serde::deserializer::RowDeserializer, test_helpers::test_client_builder, Query, Row, YdbResult,
@@ -291,7 +292,7 @@ async fn test_deserialize_enum() -> YdbResult<()> {
 #[tokio::test]
 #[ignore] // need YDB access
 async fn test_deserialize_enum_i32() -> YdbResult<()> {
-    #[derive(Deserialize, Eq, PartialEq, Debug)]
+    #[derive(Deserialize_repr, Eq, PartialEq, Debug)]
     #[repr(i32)]
     enum Enum {
         Variant1 = 0,

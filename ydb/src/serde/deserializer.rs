@@ -1,6 +1,6 @@
 use serde::{
     de::{self, MapAccess},
-    Deserialize, Deserializer,
+    Deserializer,
 };
 
 use crate::{Row, Value, YdbError};
@@ -883,24 +883,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
             variant: &'a [u8],
         }
 
-        struct EnumInt32Access<'a> {
-            variant: &'a i32,
-        }
 
-        impl<'de, 'a> de::EnumAccess<'de> for EnumInt32Access<'a> {
-            type Error = YdbError;
-            type Variant = UnitVariantAccess;
-
-            fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
-            where
-                V: de::DeserializeSeed<'de>,
-            {
-                let variant = self.variant;
-                let val =
-                    seed.deserialize(de::value::I32Deserializer::<YdbError>::new(*variant))?;
-                Ok((val, UnitVariantAccess))
-            }
-        }
 
         impl<'de, 'a> de::EnumAccess<'de> for EnumStringAccess<'a> {
             type Error = YdbError;
@@ -969,28 +952,15 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         match &self.value {
             Value::Text(s) => visitor.visit_enum(EnumStringAccess { variant: &s }),
             Value::Bytes(b) => visitor.visit_enum(EnumBytesAccess { variant: &b }),
-            Value::Int32(x) => visitor.visit_enum(EnumInt32Access { variant: x }),
-            v @ (Value::Int8(_)
-            | Value::Int16(_)
-            | Value::Int64(_)
-            | Value::Uint8(_)
-            | Value::Uint16(_)
-            | Value::Uint32(_)
-            | Value::Uint64(_)) => {
-                // Integer representation of enum
-                let variant_index = match v {
-                    Value::Int8(i) => *i as u32,
-                    Value::Int16(i) => *i as u32,
-                    Value::Int32(i) => *i as u32,
-                    Value::Int64(i) => *i as u32,
-                    Value::Uint8(i) => *i as u32,
-                    Value::Uint16(i) => *i as u32,
-                    Value::Uint32(i) => *i as u32,
-                    Value::Uint64(i) => *i as u32,
-                    _ => unreachable!(), // This case is impossible due to the previous match
-                };
-                visitor.visit_u32(variant_index)
-            }
+            // Используем нативные методы визитора для разных числовых типов
+            Value::Int8(i) => visitor.visit_i8(*i),
+            Value::Int16(i) => visitor.visit_i16(*i),
+            Value::Int32(i) => visitor.visit_i32(*i),
+            Value::Int64(i) => visitor.visit_i64(*i),
+            Value::Uint8(i) => visitor.visit_u8(*i),
+            Value::Uint16(i) => visitor.visit_u16(*i),
+            Value::Uint32(i) => visitor.visit_u32(*i),
+            Value::Uint64(i) => visitor.visit_u64(*i),
             _ => Err(YdbError::Convert(format!(
                 "Expected String or Integer for enum, got {:?}",
                 self.value
