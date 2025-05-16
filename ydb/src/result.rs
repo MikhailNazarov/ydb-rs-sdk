@@ -166,6 +166,10 @@ impl Row {
         self.columns.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
+
     /// Returns a vector of column names.
     pub fn get_columns_names(&self) -> Vec<String> {
         self.columns_by_name.keys().cloned().collect()

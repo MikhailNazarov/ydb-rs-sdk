@@ -152,3 +152,161 @@ async fn test_deserialize_f64() -> YdbResult<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_bool() -> YdbResult<()> {
+    let db_value = simple_test::<bool>(
+        r#"
+            select true
+        "#,
+    )
+    .await?;
+
+    let test_value = true;
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_string() -> YdbResult<()> {
+    let db_value = simple_test::<String>(
+        r#"
+            select 'test'
+        "#,
+    )
+    .await?;
+
+    let test_value = "test".to_string();
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_array() -> YdbResult<()> {
+    let db_value = simple_test::<Vec<i32>>(
+        r#"
+            select [1, 2, 3]
+        "#,
+    )
+    .await?;
+
+    let test_value = vec![1, 2, 3];
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_optional_string_some() -> YdbResult<()> {
+    let db_value = simple_test::<Option<String>>(
+        r#"
+            select CAST('test' AS Utf8?)
+        "#,
+    )
+    .await?;
+
+    let test_value = Some("test".to_string());
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_optional_string_none() -> YdbResult<()> {
+    let db_value = simple_test::<Option<String>>(
+        r#"
+            select CAST(NULL AS Utf8?)
+        "#,
+    )
+    .await?;
+
+    let test_value = None;
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_optional_bool_some() -> YdbResult<()> {
+    let db_value = simple_test::<Option<bool>>(
+        r#"
+            select CAST(true AS Bool?)
+        "#,
+    )
+    .await?;
+
+    let test_value = Some(true);
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_optional_bool_none() -> YdbResult<()> {
+    let db_value = simple_test::<Option<bool>>(
+        r#"
+            select CAST(NULL AS Bool?)
+        "#,
+    )
+    .await?;
+
+    let test_value = None;
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_enum() -> YdbResult<()> {
+    #[derive(Deserialize, Eq, PartialEq, Debug)]
+    enum Enum {
+        Variant1,
+        Variant2,
+        Variant3,
+    }
+
+    let db_value = simple_test::<Enum>(
+        r#"
+            select 'Variant3'
+        "#,
+    )
+    .await?;
+
+    let test_value = Enum::Variant3;
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // need YDB access
+async fn test_deserialize_enum_i32() -> YdbResult<()> {
+    #[derive(Deserialize, Eq, PartialEq, Debug)]
+    #[repr(i32)]
+    enum Enum {
+        Variant1 = 0,
+        Variant2 = 1,
+    }
+
+    let db_value = simple_test::<Enum>(
+        r#"
+            select 1
+        "#,
+    )
+    .await?;
+
+    let test_value = Enum::Variant2;
+    assert_eq!(test_value, db_value);
+
+    Ok(())
+}

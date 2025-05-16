@@ -1,6 +1,6 @@
 use serde::{
     de::{self, MapAccess},
-    Deserializer,
+    Deserialize, Deserializer,
 };
 
 use crate::{Row, Value, YdbError};
@@ -873,76 +873,105 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
     where
         V: serde::de::Visitor<'de>,
     {
+        // For string representation of enum
+        struct EnumStringAccess<'a> {
+            variant: &'a str,
+        }
+
+        // For string representation of enum
+        struct EnumBytesAccess<'a> {
+            variant: &'a [u8],
+        }
+
+        struct EnumInt32Access<'a> {
+            variant: &'a i32,
+        }
+
+        impl<'de, 'a> de::EnumAccess<'de> for EnumInt32Access<'a> {
+            type Error = YdbError;
+            type Variant = UnitVariantAccess;
+
+            fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+            where
+                V: de::DeserializeSeed<'de>,
+            {
+                let variant = self.variant;
+                let val =
+                    seed.deserialize(de::value::I32Deserializer::<YdbError>::new(*variant))?;
+                Ok((val, UnitVariantAccess))
+            }
+        }
+
+        impl<'de, 'a> de::EnumAccess<'de> for EnumStringAccess<'a> {
+            type Error = YdbError;
+            type Variant = UnitVariantAccess;
+
+            fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+            where
+                V: de::DeserializeSeed<'de>,
+            {
+                let variant = self.variant;
+                let val = seed.deserialize(de::value::StrDeserializer::<YdbError>::new(variant))?;
+                Ok((val, UnitVariantAccess))
+            }
+        }
+
+        impl<'de, 'a> de::EnumAccess<'de> for EnumBytesAccess<'a> {
+            type Error = YdbError;
+            type Variant = UnitVariantAccess;
+
+            fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+            where
+                V: de::DeserializeSeed<'de>,
+            {
+                let variant = self.variant;
+                let val =
+                    seed.deserialize(de::value::BytesDeserializer::<YdbError>::new(variant))?;
+                Ok((val, UnitVariantAccess))
+            }
+        }
+
+        struct UnitVariantAccess;
+
+        impl<'de> de::VariantAccess<'de> for UnitVariantAccess {
+            type Error = YdbError;
+
+            fn unit_variant(self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn newtype_variant_seed<T>(self, _seed: T) -> Result<T::Value, Self::Error>
+            where
+                T: de::DeserializeSeed<'de>,
+            {
+                Err(YdbError::Convert("Newtype variants not supported".into()))
+            }
+
+            fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
+            where
+                V: de::Visitor<'de>,
+            {
+                Err(YdbError::Convert("Tuple variants not supported".into()))
+            }
+
+            fn struct_variant<V>(
+                self,
+                _fields: &'static [&'static str],
+                _visitor: V,
+            ) -> Result<V::Value, Self::Error>
+            where
+                V: de::Visitor<'de>,
+            {
+                Err(YdbError::Convert("Struct variants not supported".into()))
+            }
+        }
         // For enumerations in YDB, strings or integers are most commonly used
         match &self.value {
-            Value::Text(s) => {
-                // For string representation of enum
-                struct EnumStringAccess<'a> {
-                    variant: &'a str,
-                }
-
-                impl<'de, 'a> de::EnumAccess<'de> for EnumStringAccess<'a> {
-                    type Error = YdbError;
-                    type Variant = UnitVariantAccess;
-
-                    fn variant_seed<V>(
-                        self,
-                        seed: V,
-                    ) -> Result<(V::Value, Self::Variant), Self::Error>
-                    where
-                        V: de::DeserializeSeed<'de>,
-                    {
-                        let variant = self.variant;
-                        let val =
-                            seed.deserialize(de::value::StrDeserializer::<YdbError>::new(variant))?;
-                        Ok((val, UnitVariantAccess))
-                    }
-                }
-
-                struct UnitVariantAccess;
-
-                impl<'de> de::VariantAccess<'de> for UnitVariantAccess {
-                    type Error = YdbError;
-
-                    fn unit_variant(self) -> Result<(), Self::Error> {
-                        Ok(())
-                    }
-
-                    fn newtype_variant_seed<T>(self, _seed: T) -> Result<T::Value, Self::Error>
-                    where
-                        T: de::DeserializeSeed<'de>,
-                    {
-                        Err(YdbError::Convert("Newtype variants not supported".into()))
-                    }
-
-                    fn tuple_variant<V>(
-                        self,
-                        _len: usize,
-                        _visitor: V,
-                    ) -> Result<V::Value, Self::Error>
-                    where
-                        V: de::Visitor<'de>,
-                    {
-                        Err(YdbError::Convert("Tuple variants not supported".into()))
-                    }
-
-                    fn struct_variant<V>(
-                        self,
-                        _fields: &'static [&'static str],
-                        _visitor: V,
-                    ) -> Result<V::Value, Self::Error>
-                    where
-                        V: de::Visitor<'de>,
-                    {
-                        Err(YdbError::Convert("Struct variants not supported".into()))
-                    }
-                }
-
-                visitor.visit_enum(EnumStringAccess { variant: s })
-            }
+            Value::Text(s) => visitor.visit_enum(EnumStringAccess { variant: &s }),
+            Value::Bytes(b) => visitor.visit_enum(EnumBytesAccess { variant: &b }),
+            Value::Int32(x) => visitor.visit_enum(EnumInt32Access { variant: x }),
             v @ (Value::Int8(_)
             | Value::Int16(_)
-            | Value::Int32(_)
             | Value::Int64(_)
             | Value::Uint8(_)
             | Value::Uint16(_)
@@ -962,9 +991,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
                 };
                 visitor.visit_u32(variant_index)
             }
-            _ => Err(YdbError::Convert(
-                "Expected String or Integer for enum".into(),
-            )),
+            _ => Err(YdbError::Convert(format!(
+                "Expected String or Integer for enum, got {:?}",
+                self.value
+            ))),
         }
     }
 
