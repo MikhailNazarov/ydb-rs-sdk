@@ -106,6 +106,457 @@ impl From<&str> for Value {
     }
 }
 
+// ===== Chrono Type Conversions =====
+
+/// Converts YDB timestamp or datetime value to Chrono's DateTime<Utc>
+///
+/// This implementation provides a more semantically appropriate conversion for timestamp
+/// values compared to the standard SystemTime conversion.
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use std::time::SystemTime;
+/// use chrono::{DateTime, Utc};
+///
+/// // Create a timestamp value
+/// let now = SystemTime::now();
+/// let timestamp_value = Value::Timestamp(now);
+///
+/// // Convert to chrono DateTime<Utc>
+/// let datetime: DateTime<Utc> = timestamp_value.try_into().unwrap();
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the value type is not Timestamp or DateTime, or if
+/// the conversion from SystemTime to DateTime<Utc> fails.
+impl TryFrom<Value> for chrono::DateTime<chrono::Utc> {
+    type Error = YdbError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Timestamp(ts) => {
+                // Convert SystemTime to chrono::DateTime<Utc>
+                let st: SystemTime = ts;
+                let duration = st.duration_since(SystemTime::UNIX_EPOCH).map_err(|e| {
+                    YdbError::Convert(format!("Failed to convert timestamp: {}", e))
+                })?;
+
+                // Create DateTime from duration since epoch
+                let seconds = duration.as_secs() as i64;
+                let nanos = duration.subsec_nanos();
+
+                // Use from_timestamp_opt which returns Option<DateTime<Utc>>
+                Ok(
+                    chrono::DateTime::<chrono::Utc>::from_timestamp_opt(seconds, nanos)
+                        .unwrap_or_else(|| {
+                            chrono::DateTime::<chrono::Utc>::from_timestamp_opt(0, 0).unwrap()
+                        }),
+                )
+            }
+            Value::DateTime(dt) => {
+                // Also support DateTime conversion
+                let st: SystemTime = dt;
+                let duration = st
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_err(|e| YdbError::Convert(format!("Failed to convert datetime: {}", e)))?;
+
+                // Create DateTime from duration since epoch
+                let seconds = duration.as_secs() as i64;
+                let nanos = duration.subsec_nanos();
+
+                Ok(
+                    chrono::DateTime::<chrono::Utc>::from_timestamp_opt(seconds, nanos)
+                        .unwrap_or_else(|| {
+                            chrono::DateTime::<chrono::Utc>::from_timestamp_opt(0, 0).unwrap()
+                        }),
+                )
+            }
+            _ => Err(YdbError::Convert(format!(
+                "Failed to convert from {} to chrono::DateTime<Utc>",
+                value.kind_static()
+            ))),
+        }
+    }
+}
+
+/// Converts YDB datetime or timestamp value to Chrono's NaiveDateTime
+///
+/// NaiveDateTime represents a datetime without timezone information, making it
+/// appropriate for YDB's DateTime type.
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use std::time::SystemTime;
+/// use chrono::NaiveDateTime;
+///
+/// // Create a datetime value
+/// let now = SystemTime::now();
+/// let datetime_value = Value::DateTime(now);
+///
+/// // Convert to chrono NaiveDateTime
+/// let naive_dt: NaiveDateTime = datetime_value.try_into().unwrap();
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the value type is not DateTime or Timestamp, or if
+/// the conversion fails.
+impl TryFrom<Value> for chrono::NaiveDateTime {
+    type Error = YdbError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::DateTime(dt) => {
+                // Convert SystemTime to chrono::NaiveDateTime
+                let st: SystemTime = dt;
+                let duration = st
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_err(|e| YdbError::Convert(format!("Failed to convert datetime: {}", e)))?;
+
+                // Create NaiveDateTime from seconds and nanoseconds
+                let seconds = duration.as_secs() as i64;
+                let nanos = duration.subsec_nanos();
+
+                chrono::NaiveDateTime::from_timestamp_opt(seconds, nanos)
+                    .ok_or_else(|| YdbError::Convert("Invalid timestamp for NaiveDateTime".into()))
+            }
+            Value::Timestamp(ts) => {
+                // Also support Timestamp conversion
+                let st: SystemTime = ts;
+                let duration = st.duration_since(SystemTime::UNIX_EPOCH).map_err(|e| {
+                    YdbError::Convert(format!("Failed to convert timestamp: {}", e))
+                })?;
+
+                let seconds = duration.as_secs() as i64;
+                let nanos = duration.subsec_nanos();
+
+                chrono::NaiveDateTime::from_timestamp_opt(seconds, nanos)
+                    .ok_or_else(|| YdbError::Convert("Invalid timestamp for NaiveDateTime".into()))
+            }
+            _ => Err(YdbError::Convert(format!(
+                "Failed to convert from {} to chrono::NaiveDateTime",
+                value.kind_static()
+            ))),
+        }
+    }
+}
+
+/// Converts YDB date value to Chrono's NaiveDate
+///
+/// NaiveDate represents a date without timezone information, matching
+/// the semantics of YDB's Date type.
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use std::time::SystemTime;
+/// use chrono::NaiveDate;
+///
+/// // Create a date value
+/// let now = SystemTime::now();
+/// let date_value = Value::Date(now);
+///
+/// // Convert to chrono NaiveDate
+/// let date: NaiveDate = date_value.try_into().unwrap();
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the value type is not Date, or if the conversion fails.
+impl TryFrom<Value> for chrono::NaiveDate {
+    type Error = YdbError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Date(d) => {
+                // Convert SystemTime to chrono::NaiveDate
+                let st: SystemTime = d;
+                let duration = st
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_err(|e| YdbError::Convert(format!("Failed to convert date: {}", e)))?;
+
+                // Convert to NaiveDateTime first (at UTC) then extract the date part
+                let seconds = duration.as_secs() as i64;
+                let datetime = chrono::NaiveDateTime::from_timestamp_opt(
+                    seconds, 0, // Ignore nanoseconds for date
+                )
+                .ok_or_else(|| YdbError::Convert("Invalid timestamp for NaiveDate".into()))?;
+
+                Ok(datetime.date())
+            }
+            _ => Err(YdbError::Convert(format!(
+                "Failed to convert from {} to chrono::NaiveDate",
+                value.kind_static()
+            ))),
+        }
+    }
+}
+
+// Conversion from chrono types to Value
+
+/// Converts Chrono's DateTime<Utc> to a YDB Timestamp value
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use chrono::{DateTime, Utc, TimeZone};
+///
+/// // Create a chrono DateTime
+/// let dt = Utc.with_ymd_and_hms_opt(2024, 4, 15, 12, 0, 0).unwrap();
+///
+/// // Convert to YDB Value
+/// let timestamp_value: Value = dt.into();
+///
+/// // The result will be Value::Timestamp
+/// ```
+impl From<chrono::DateTime<chrono::Utc>> for Value {
+    fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
+        // Convert chrono::DateTime<Utc> to SystemTime and then to Value::Timestamp
+        let timestamp = dt.timestamp();
+        let nanos = dt.timestamp_subsec_nanos();
+
+        // Handle negative timestamps
+        let system_time = if timestamp >= 0 {
+            SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::new(timestamp as u64, nanos))
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        } else {
+            SystemTime::UNIX_EPOCH
+                .checked_sub(std::time::Duration::new((-timestamp) as u64, nanos))
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        };
+
+        Value::Timestamp(system_time)
+    }
+}
+
+/// Converts Chrono's NaiveDateTime to a YDB DateTime value
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use chrono::NaiveDateTime;
+///
+/// // Create a chrono NaiveDateTime
+/// let naive_dt = NaiveDateTime::new(
+///     chrono::NaiveDate::from_ymd_opt(2024, 4, 15).unwrap(),
+///     chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+/// );
+///
+/// // Convert to YDB Value
+/// let datetime_value: Value = naive_dt.into();
+///
+/// // The result will be Value::DateTime
+/// ```
+impl From<chrono::NaiveDateTime> for Value {
+    fn from(dt: chrono::NaiveDateTime) -> Self {
+        // Convert NaiveDateTime to SystemTime and then to Value::DateTime
+        let timestamp = dt.timestamp();
+        let nanos = dt.timestamp_subsec_nanos();
+
+        // Handle negative timestamps
+        let system_time = if timestamp >= 0 {
+            SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::new(timestamp as u64, nanos))
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        } else {
+            SystemTime::UNIX_EPOCH
+                .checked_sub(std::time::Duration::new((-timestamp) as u64, nanos))
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        };
+
+        Value::DateTime(system_time)
+    }
+}
+
+/// Converts Chrono's NaiveDate to a YDB Date value
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use chrono::NaiveDate;
+///
+/// // Create a chrono NaiveDate
+/// let date = NaiveDate::from_ymd_opt(2024, 4, 15).unwrap();
+///
+/// // Convert to YDB Value
+/// let date_value: Value = date.into();
+///
+/// // The result will be Value::Date
+/// ```
+impl From<chrono::NaiveDate> for Value {
+    fn from(d: chrono::NaiveDate) -> Self {
+        // Convert NaiveDate to midnight, then to SystemTime, then to Value::Date
+        let naive_dt = d.and_hms_opt(0, 0, 0).unwrap();
+        let timestamp = naive_dt.timestamp();
+
+        // Handle negative timestamps (dates before 1970)
+        let system_time = if timestamp >= 0 {
+            SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::new(timestamp as u64, 0))
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        } else {
+            SystemTime::UNIX_EPOCH
+                .checked_sub(std::time::Duration::new((-timestamp) as u64, 0))
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        };
+
+        Value::Date(system_time)
+    }
+}
+
+// Support for optional chrono types
+
+/// Converts YDB optional timestamp/datetime to Option<DateTime<Utc>>
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use std::time::SystemTime;
+/// use chrono::{DateTime, Utc};
+///
+/// // Create an optional timestamp value
+/// let now = SystemTime::now();
+/// let opt_value = Value::Optional(Box::new(ydb::ValueOptional {
+///     t: Value::Timestamp(SystemTime::UNIX_EPOCH),
+///     value: Some(Value::Timestamp(now)),
+/// }));
+///
+/// // Convert to Option<DateTime<Utc>>
+/// let opt_dt: Option<DateTime<Utc>> = opt_value.try_into().unwrap();
+/// ```
+impl TryFrom<Value> for Option<chrono::DateTime<chrono::Utc>> {
+    type Error = YdbError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Optional(opt_val) => {
+                // Check if the optional value has compatible type
+                // We'll do a safe check without failing on type mismatch
+                if let Err(_) = chrono::DateTime::<chrono::Utc>::try_from(opt_val.t.clone()) {
+                    return Err(YdbError::Convert(format!(
+                        "Optional value has incompatible type for chrono::DateTime<Utc>"
+                    )));
+                }
+
+                match opt_val.value {
+                    Some(val) => {
+                        let dt = chrono::DateTime::<chrono::Utc>::try_from(val)?;
+                        Ok(Some(dt))
+                    }
+                    None => Ok(None),
+                }
+            }
+            // If not optional, try to convert directly
+            value => Ok(Some(value.try_into()?)),
+        }
+    }
+}
+
+/// Converts YDB optional datetime/timestamp to Option<NaiveDateTime>
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use std::time::SystemTime;
+/// use chrono::NaiveDateTime;
+///
+/// // Create an optional datetime value (None case)
+/// let opt_value = Value::Optional(Box::new(ydb::ValueOptional {
+///     t: Value::DateTime(SystemTime::UNIX_EPOCH),
+///     value: None,
+/// }));
+///
+/// // Convert to Option<NaiveDateTime>
+/// let opt_dt: Option<NaiveDateTime> = opt_value.try_into().unwrap();
+/// assert!(opt_dt.is_none());
+/// ```
+impl TryFrom<Value> for Option<chrono::NaiveDateTime> {
+    type Error = YdbError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Optional(opt_val) => {
+                // Check if the optional value has compatible type
+                // We'll do a safe check without failing on type mismatch
+                if let Err(_) = chrono::NaiveDateTime::try_from(opt_val.t.clone()) {
+                    return Err(YdbError::Convert(format!(
+                        "Optional value has incompatible type for chrono::NaiveDateTime"
+                    )));
+                }
+
+                match opt_val.value {
+                    Some(val) => {
+                        let dt = chrono::NaiveDateTime::try_from(val)?;
+                        Ok(Some(dt))
+                    }
+                    None => Ok(None),
+                }
+            }
+            // If not optional, try to convert directly
+            value => Ok(Some(value.try_into()?)),
+        }
+    }
+}
+
+/// Converts YDB optional date to Option<NaiveDate>
+///
+/// # Examples
+///
+/// ```
+/// use ydb::Value;
+/// use std::time::SystemTime;
+/// use chrono::NaiveDate;
+///
+/// // Create an optional date value
+/// let now = SystemTime::now();
+/// let opt_value = Value::Optional(Box::new(ydb::ValueOptional {
+///     t: Value::Date(SystemTime::UNIX_EPOCH),
+///     value: Some(Value::Date(now)),
+/// }));
+///
+/// // Convert to Option<NaiveDate>
+/// let opt_date: Option<NaiveDate> = opt_value.try_into().unwrap();
+/// ```
+impl TryFrom<Value> for Option<chrono::NaiveDate> {
+    type Error = YdbError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Optional(opt_val) => {
+                // Check if the optional value has compatible type
+                // We'll do a safe check without failing on type mismatch
+                if let Err(_) = chrono::NaiveDate::try_from(opt_val.t.clone()) {
+                    return Err(YdbError::Convert(format!(
+                        "Optional value has incompatible type for chrono::NaiveDate"
+                    )));
+                }
+
+                match opt_val.value {
+                    Some(val) => {
+                        let d = chrono::NaiveDate::try_from(val)?;
+                        Ok(Some(d))
+                    }
+                    None => Ok(None),
+                }
+            }
+            // If not optional, try to convert directly
+            value => Ok(Some(value.try_into()?)),
+        }
+    }
+}
+
 impl<T: Into<Value> + Default> From<Option<T>> for Value {
     fn from(from_value: Option<T>) -> Self {
         let t = T::default().into();
