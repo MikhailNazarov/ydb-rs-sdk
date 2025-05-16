@@ -10,7 +10,7 @@ pub struct RowDeserializer {
 }
 
 impl RowDeserializer {
-    pub fn new(row: Row) -> Self {
+    pub fn from_row(row: Row) -> Self {
         Self { row }
     }
 
@@ -476,7 +476,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         if let Value::Text(s) = self.value {
             visitor.visit_str(&s)
         } else {
-            Err(crate::YdbError::Convert("Expected Text".into()))
+            Err(crate::YdbError::Convert(format!(
+                "Expected Text, found: {:?}",
+                self.value
+            )))
         }
     }
 
@@ -578,7 +581,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         if let Value::Uint32(i) = self.value {
             visitor.visit_u32(i)
         } else {
-            Err(crate::YdbError::Convert("Expected Uint32".into()))
+            Err(crate::YdbError::Convert(format!(
+                "Expected Uint32, got {:?}",
+                self.value
+            )))
         }
     }
 
@@ -589,7 +595,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         if let Value::Uint64(i) = self.value {
             visitor.visit_u64(i)
         } else {
-            Err(crate::YdbError::Convert("Expected Uint64".into()))
+            Err(crate::YdbError::Convert(format!(
+                "Expected Uint64, got {:?}",
+                self.value
+            )))
         }
     }
 
@@ -600,7 +609,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         if let Value::Float(f) = self.value {
             visitor.visit_f32(f)
         } else {
-            Err(crate::YdbError::Convert("Expected Float".into()))
+            Err(crate::YdbError::Convert(format!(
+                "Expected Float, got {:?}",
+                self.value
+            )))
         }
     }
 
@@ -611,7 +623,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         if let Value::Double(d) = self.value {
             visitor.visit_f64(d)
         } else {
-            Err(crate::YdbError::Convert("Expected Double".into()))
+            Err(crate::YdbError::Convert(format!(
+                "Expected Double, got {:?}",
+                self.value
+            )))
         }
     }
 
@@ -642,8 +657,16 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
     {
         if let Value::Text(s) = self.value {
             visitor.visit_string(s)
+        } else if let Value::Bytes(b) = self.value {
+            let s = String::from_utf8(Vec::from(b)).map_err(|_| {
+                crate::YdbError::Convert("Expected valid UTF-8 bytes for string".into())
+            })?;
+            visitor.visit_string(s)
         } else {
-            Err(crate::YdbError::Convert("Expected Text".into()))
+            Err(crate::YdbError::Convert(format!(
+                "Expected Text, found: {:?}",
+                self.value
+            )))
         }
     }
 
@@ -870,7 +893,8 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
                         V: de::DeserializeSeed<'de>,
                     {
                         let variant = self.variant;
-                        let val = seed.deserialize(de::value::StrDeserializer::<YdbError>::new(variant))?;
+                        let val =
+                            seed.deserialize(de::value::StrDeserializer::<YdbError>::new(variant))?;
                         Ok((val, UnitVariantAccess))
                     }
                 }
@@ -916,8 +940,14 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
 
                 visitor.visit_enum(EnumStringAccess { variant: s })
             }
-            v @ (Value::Int8(_) | Value::Int16(_) | Value::Int32(_) | Value::Int64(_) |
-                 Value::Uint8(_) | Value::Uint16(_) | Value::Uint32(_) | Value::Uint64(_)) => {
+            v @ (Value::Int8(_)
+            | Value::Int16(_)
+            | Value::Int32(_)
+            | Value::Int64(_)
+            | Value::Uint8(_)
+            | Value::Uint16(_)
+            | Value::Uint32(_)
+            | Value::Uint64(_)) => {
                 // Integer representation of enum
                 let variant_index = match v {
                     Value::Int8(i) => *i as u32,
@@ -928,7 +958,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
                     Value::Uint16(i) => *i as u32,
                     Value::Uint32(i) => *i as u32,
                     Value::Uint64(i) => *i as u32,
-                    _ => unreachable!(), // Этот случай невозможен из-за предыдущего сопоставления
+                    _ => unreachable!(), // This case is impossible due to the previous match
                 };
                 visitor.visit_u32(variant_index)
             }
