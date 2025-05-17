@@ -167,6 +167,8 @@ pub use crate::{
     types::{Bytes, Sign, SignedInterval, Value, ValueList, ValueOptional, ValueStruct},
 };
 
+pub use crate::serde::deserializer::RowDeserializer;
+
 // deprecated types
 
 #[allow(deprecated)]

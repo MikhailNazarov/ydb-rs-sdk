@@ -1,6 +1,7 @@
 use crate::errors::YdbError;
 use crate::types::{Bytes, Value, ValueOptional};
 use crate::{ValueList, ValueStruct};
+use chrono::NaiveDateTime;
 use itertools::Itertools;
 use std::any::type_name;
 use std::collections::HashMap;
@@ -148,13 +149,10 @@ impl TryFrom<Value> for chrono::DateTime<chrono::Utc> {
                 let seconds = duration.as_secs() as i64;
                 let nanos = duration.subsec_nanos();
 
-                // Use from_timestamp_opt which returns Option<DateTime<Utc>>
-                Ok(
-                    chrono::DateTime::<chrono::Utc>::from_timestamp_opt(seconds, nanos)
-                        .unwrap_or_else(|| {
-                            chrono::DateTime::<chrono::Utc>::from_timestamp_opt(0, 0).unwrap()
-                        }),
-                )
+                Ok(chrono::DateTime::<chrono::Utc>::from_utc(
+                    NaiveDateTime::from_timestamp_opt(seconds, nanos).unwrap(),
+                    chrono::Utc,
+                ))
             }
             Value::DateTime(dt) => {
                 // Also support DateTime conversion
@@ -167,12 +165,10 @@ impl TryFrom<Value> for chrono::DateTime<chrono::Utc> {
                 let seconds = duration.as_secs() as i64;
                 let nanos = duration.subsec_nanos();
 
-                Ok(
-                    chrono::DateTime::<chrono::Utc>::from_timestamp_opt(seconds, nanos)
-                        .unwrap_or_else(|| {
-                            chrono::DateTime::<chrono::Utc>::from_timestamp_opt(0, 0).unwrap()
-                        }),
-                )
+                Ok(chrono::DateTime::<chrono::Utc>::from_utc(
+                    NaiveDateTime::from_timestamp_opt(seconds, nanos).unwrap(),
+                    chrono::Utc,
+                ))
             }
             _ => Err(YdbError::Convert(format!(
                 "Failed to convert from {} to chrono::DateTime<Utc>",
